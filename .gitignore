@@ -1,49 +1,62 @@
-# Python
+# ─── Python ───────────────────────────────────────────────
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
 
-# Virtual Environment
+# ─── Virtual environments ─────────────────────────────────
 venv/
 .venv/
+env/
+.env/
 
+# ─── Environment variables ────────────────────────────────
 .env
 
-# Audio / Video (BIG FILES)
-*.wav
-*.mp3
-*.mp4
-*.mkv
+# ─── Testing ──────────────────────────────────────────────
+.pytest_cache/
+.hypothesis/
+htmlcov/
+.coverage
+coverage.xml
+*.cover
 
-# Generated outputs
-audio_to_text/*.txt
-video_to_audio/*.wav
+# ─── Data & generated files ───────────────────────────────
+data/intermediate/
+data/vectordb/
+data/meetings.json
 
-# Local data / notes
-data/
-Notes/
+# ─── Notes (generated highlights) ────────────────────────
+Notes/*.txt
+Notes/*.pdf
+Notes/*.docx
+
+# ─── Uploads (user recordings / test videos) ─────────────
 uploads/
+!uploads/.gitkeep
 
-# Vector DB (future)
-vectordb/
-chroma/
-
-# Whisper models
+# ─── Model cache ──────────────────────────────────────────
+.cache/
 *.pt
 *.bin
+*.safetensors
 
-# VS Code
+# ─── IDE / OS ─────────────────────────────────────────────
 .vscode/
-
-# Tooling caches
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-*.log
-
-# OS junk
-.DS_Store
+.idea/
+*.DS_Store
 Thumbs.db
+desktop.ini
+
+# ─── Kiro spec workspace files ────────────────────────────
+.kiro/
+
+# ─── Logs ─────────────────────────────────────────────────
+*.log
+logs/
