@@ -1,287 +1,220 @@
 # Meeting Intelligence System
 
-Turn meetings into searchable knowledge with AI-powered transcription, highlights, and chat.
+Turn meeting recordings into searchable knowledge — transcription, highlights, and AI chat, all in one place.
 
----
-
-## Overview
-
-The **Meeting Intelligence System** is an end-to-end AI application that converts meeting recordings into structured insights. It allows users to upload or record meetings, automatically transcribe them, generate highlights, and ask questions about the meeting content using an intelligent chat assistant.
-
-This project demonstrates a production-style architecture using modern LLM pipelines, vector databases, and retrieval-augmented generation.
 <p align="center">
   <img src="assets/Screenshot 2026-02-12 223029.png" width="900">
 </p>
 
-<p align="center"><b>Meeting Intelligence Dashboard</b></p>
+---
 
+## What it does
 
-## Features
+Upload or record a meeting (MP4 / MP3 / WAV), and the system will:
 
-### Core Features
-
-* Upload or record meeting audio/video
-* Automatic speech-to-text transcription
-* Semantic chunking of transcript
-* Vector embeddings storage
-* Meeting highlights generation
-* Conversational Q&A over meetings
-* Multi-meeting support with session switching
-
-### Advanced Features
-
-* Meeting-specific vector databases
-* Conversational memory for chat
-* Highlight extraction agent
-* Structured retrieval queries
-* Download highlights (PDF / TXT / DOCX)
-* Meeting history panel
-* Active meeting indicator
-* Recording timer
-* Modal UI inputs
-* Multi-language chat responses
+1. Extract audio with FFmpeg
+2. Transcribe speech with OpenAI Whisper
+3. Chunk and embed the transcript into a per-meeting ChromaDB vector store
+4. Let you generate bullet-point highlights via Groq LLM
+5. Let you chat with the meeting — ask any question, get answers grounded only in what was said
 
 ---
 
-## Tech Stack
+## Tech stack
 
-**Backend**
-
-* Python
-* FastAPI
-* LangChain
-* Groq LLM
-* Whisper
-* SentenceTransformers
-* Chroma Vector DB
-
-**Frontend**
-
-* HTML
-* CSS
-* JavaScript (Vanilla)
-
-**Processing Pipeline**
-
-```
-Video → Audio → Transcript → Chunks → Embeddings → Vector DB → Retrieval → LLM
-```
+| Layer | Technology |
+|---|---|
+| Backend API | FastAPI + Uvicorn |
+| Speech-to-text | OpenAI Whisper (`small` model) |
+| Embeddings | `paraphrase-multilingual-MiniLM-L12-v2` (SentenceTransformers) |
+| Vector store | ChromaDB (PersistentClient, per-meeting collections) |
+| LLM | Groq (`openai/gpt-oss-120b`) |
+| LangChain | ConversationalRetrievalChain + ConversationBufferWindowMemory |
+| Audio extraction | FFmpeg |
+| Frontend | Vanilla HTML / CSS / JavaScript |
+| Export | ReportLab (PDF), python-docx (DOCX) |
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
-Project Structure
------------------
-
-MEETING CHANGER/
+Meeting_Intelligence_System/
 │
-├── .github/
-│   └── workflows/
-│       └── ci.yml
+├── app/
+│   ├── core/
+│   │   └── config.py          # Central paths + FFmpeg discovery
+│   ├── pipeline/
+│   │   ├── video_to_audio.py  # FFmpeg: MP4/MP3 → WAV
+│   │   ├── audio_to_text.py   # Whisper: WAV → transcript.txt
+│   │   ├── chunk_text.py      # LangChain splitter → chunks.txt
+│   │   └── pipeline.py        # LangChain sequential chain
+│   ├── storage/
+│   │   └── embed_store.py     # SentenceTransformers + ChromaDB
+│   ├── intelligence/
+│   │   ├── highlights.py      # Multi-query retrieval → Groq highlights
+│   │   └── chat.py            # ConversationalRetrievalChain + memory
+│   ├── recording/
+│   │   └── recorder.py        # sounddevice live recording
+│   └── services.py            # Orchestrates pipeline → embed → chat/highlights
 │
-├── data/
-│   ├── intermediate/
-│   └── vectordb/
-│
-├── Frontend/
+├── frontend/
 │   ├── index.html
 │   ├── script.js
 │   └── style.css
 │
-├── Notes/
-│     Note:
-         - vectordb stores embeddings per meeting
-         - uploads stores user recordings
-         - intermediate stores temporary processing files
-
-├── src/
-│   ├── audio_to_text.py
-│   ├── chat.py
-│   ├── chunk_text.py
-│   ├── embed_store.py
-│   ├── highlights.py
-│   ├── pipeline.py
-│   ├── recorder.py
-│   ├── services.py
-│   └── video_to_audio.py
+├── data/
+│   ├── intermediate/          # transcript.txt, chunks.txt, clean_meeting_audio.wav
+│   └── vectordb/              # Per-meeting ChromaDB stores (one folder per meeting_id)
 │
-├── uploads/
-├── venv/
-├── .env
-├── .gitignore
-├── main.py
-├── README.md
-└── requirements.txt
+├── Notes/                     # Generated highlights (.txt / .pdf / .docx)
+├── uploads/                   # Uploaded meeting files
+├── assets/                    # Screenshots
+├── tests/                     # Pytest test suite
+├── main.py                    # FastAPI app entry point
+├── requirements.txt
+└── .env                       # GROQ_API_KEY (not committed)
+```
 
+---
 
 ## Installation
 
-### 1. Clone Repository
+### 1. Clone
 
-```
+```bash
 git clone <repo_url>
-cd project
+cd Meeting_Intelligence_System
 ```
 
-### 2. Create Virtual Environment
+### 2. Create virtual environment
 
-```
+```bash
 python -m venv venv
+# Windows
+venv\Scripts\activate
+# macOS / Linux
 source venv/bin/activate
 ```
 
-### 3. Install Dependencies
+### 3. Install dependencies
 
-```
+```bash
 pip install -r requirements.txt
 ```
 
-### 4. Add Environment Variables
+### 4. FFmpeg
 
-Create `.env`
+FFmpeg must be available. Either:
+- Install system-wide so it's on `PATH`, **or**
+- Update the `_FFMPEG_FALLBACK_BIN` path in `app/core/config.py` to point to your local FFmpeg `bin/` folder.
+
+### 5. Environment variables
+
+Create a `.env` file in the project root:
 
 ```
-GROQ_API_KEY=your_key_here
+GROQ_API_KEY=your_groq_api_key_here
 ```
+
+Get a free key at [console.groq.com](https://console.groq.com).
 
 ---
 
-## Running the Application
+## Running the app
 
-Start backend server:
-
-```
+```bash
 uvicorn main:app --reload
 ```
 
-Open frontend:
+Then open `frontend/index.html` in your browser (or serve it with any static file server).
+
+---
+
+## How the pipeline works
 
 ```
-Frontend/index.html
+Upload / Record
+      │
+      ▼
+video_to_audio.py   →  FFmpeg extracts 16 kHz mono WAV
+      │
+      ▼
+audio_to_text.py    →  Whisper transcribes to transcript.txt
+      │
+      ▼
+chunk_text.py       →  LangChain splits into 150-char chunks (30 overlap)
+      │
+      ▼
+embed_store.py      →  SentenceTransformers encodes → ChromaDB stores
+                        (model: paraphrase-multilingual-MiniLM-L12-v2)
+      │
+      ├──▶  highlights.py  →  5 semantic queries → Groq LLM → bullet highlights
+      │
+      └──▶  chat.py        →  ConversationalRetrievalChain → Groq LLM → answers
 ```
 
----
-
-## How It Works
-
-### Upload Flow
-
-1. User uploads meeting
-2. Backend extracts audio
-3. Whisper generates transcript
-4. Text is chunked
-5. Embeddings created
-6. Stored in Chroma DB
+> **Important:** The same embedding model (`paraphrase-multilingual-MiniLM-L12-v2`) is used in both `embed_store.py` (write) and `chat.py` / `highlights.py` (read). Using different models at read vs write time will silently break retrieval.
 
 ---
 
-### Highlights Flow
+## API endpoints
 
-1. Retriever fetches important chunks
-2. LLM analyzes context
-3. Extracts key insights
-4. Saves notes file
-
----
-
-### Chat Flow
-
-1. User asks question
-2. Retriever finds relevant chunks
-3. LLM answers using context only
-4. Memory stores recent conversation
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/` | Health check |
+| `POST` | `/upload` | Upload MP4/MP3/WAV, run full pipeline |
+| `POST` | `/start-recording` | Start live microphone recording |
+| `POST` | `/stop-recording` | Stop recording, run full pipeline |
+| `POST` | `/notes` | Generate highlights for a meeting |
+| `POST` | `/chat` | Ask a question about a meeting |
+| `GET` | `/download-notes` | Download highlights as PDF / TXT / DOCX |
+| `POST` | `/set-meeting-name` | Save a human-readable name for a meeting |
+| `GET` | `/meetings` | List all saved meetings |
 
 ---
 
-## API Endpoints
+## Running tests
 
-### Upload Meeting
+Place `test_video.mp4` in the `uploads/` folder (any short MP4 works), then:
 
-```
-POST /upload
+```bash
+pytest tests/ -v -s
 ```
 
-### Generate Highlights
+The session-scoped fixtures run the full pipeline **once** per session — FFmpeg, Whisper, ChromaDB — and share the results across all test files. Whisper takes ~1-2 min on CPU on first run.
 
-```
-GET /notes?meeting_id=xxx
-```
+### Test files
 
-### Ask Question
+| File | What it tests |
+|---|---|
+| `test_video_to_audio.py` | FFmpeg extraction from `test_video.mp4` |
+| `test_audio_to_text.py` | Whisper transcription of real audio |
+| `test_embed_store.py` | ChromaDB embedding + retrieval |
+| `test_highlights.py` | Highlights generation (mocked LLM + real LLM) |
+| `test_chat.py` | Chat Q&A (mocked LLM + real LLM) |
 
-```
-POST /chat
-```
-
----
-
-## Highlight Extraction Logic
-
-Highlights agent:
-
-* runs multi-query retrieval
-* selects best chunks
-* removes duplicates
-* sends optimized context to LLM
-* formats concise highlights
+LLM tests are automatically skipped if `GROQ_API_KEY` is not set.
 
 ---
 
-## Chat Intelligence Logic
+## Key design decisions
 
-Chat agent:
+**Per-meeting vector stores** — each meeting gets its own ChromaDB directory under `data/vectordb/<meeting_id>/`. This means meetings never pollute each other's retrieval results.
 
-* uses Conversational Retrieval Chain
-* maintains short-term memory
-* prevents hallucination
-* answers only from transcript
+**Embedding model consistency** — `paraphrase-multilingual-MiniLM-L12-v2` is used at both write time (embed_store) and read time (chat + highlights). Changing one without the other silently breaks semantic search.
 
----
+**Context-only answering** — the chat prompt explicitly instructs the LLM to answer only from the retrieved context and say "Not found in the meeting transcript" if the answer isn't there. This prevents hallucination.
 
-## UI Design Principles
-
-* Clean dashboard layout
-* Real-time feedback indicators
-* Clear hierarchy
-* Sticky chat input
-* Interactive hover effects
-* Structured highlight display
+**Session-scoped test fixtures** — the expensive pipeline steps (FFmpeg, Whisper) run once per `pytest` session and are shared across all test files via `conftest.py`.
 
 ---
 
-## Performance Optimizations
+## Future improvements
 
-* embeddings loaded once
-* LLM initialized once
-* meeting-specific vector DB
-* limited retrieval context
-* deduplicated chunks
-
----
-
-## Security Considerations
-
-* Meeting isolation via meeting_id
-* No cross-meeting data access
-* Context-restricted answering
-* Environment-based API keys
-
----
-
-## Future Improvements
-
-* Speaker diarization
-* Live transcription streaming
-* Role-based highlights
-* Meeting analytics dashboard
-* Sentiment analysis
-* Action item auto-assignment
-
----
-
-## Resume Description
-
-> Built an AI-powered Meeting Intelligence System that converts recordings into searchable knowledge using Whisper, LangChain, ChromaDB, and Groq LLM, featuring semantic retrieval chat, automated highlights, and production-style architecture.
-
+- Speaker diarization (who said what)
+- Live transcription streaming
+- Meeting analytics dashboard
+- Sentiment analysis per speaker
+- Action item auto-assignment
+- Multi-language highlight extraction
