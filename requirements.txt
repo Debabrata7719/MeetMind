@@ -1,31 +1,41 @@
-# FastAPI server
+# ─── Web server ───────────────────────────────────────────
 fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart
 pydantic
 
-# Core AI
+# ─── AI / Speech ──────────────────────────────────────────
 openai-whisper
 sentence-transformers
-numpy
-scipy
 
-# Audio
-sounddevice
-ffmpeg-python
-soundfile
-
-# Vector DB / RAG
-chromadb
+# ─── LangChain stack ──────────────────────────────────────
 langchain
 langchain-community
 langchain-text-splitters
 langchain-groq
 langchain-chroma
+langchain-huggingface
 
-# Config
+# ─── Vector database ──────────────────────────────────────
+chromadb
+
+# ─── Audio processing ─────────────────────────────────────
+sounddevice
+soundfile
+ffmpeg-python
+
+# ─── Numerics ─────────────────────────────────────────────
+numpy
+scipy
+
+# ─── Config / env ─────────────────────────────────────────
 python-dotenv
 
-# Export (PDF highlights)
+# ─── Export (PDF / DOCX highlights) ───────────────────────
 reportlab
 python-docx
+
+# ─── Testing ──────────────────────────────────────────────
+pytest>=7.0
+pytest-asyncio
+httpx
