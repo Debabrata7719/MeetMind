@@ -44,11 +44,13 @@ def embed_store(chunks_file: str, meeting_id: str):
 
     collection = client.get_or_create_collection(collection_name)
 
+    import uuid
     collection.add(
         documents=chunks,
         embeddings=embeddings,
-        ids=[str(i) for i in range(len(chunks))]
+        ids=[uuid.uuid4().hex for _ in range(len(chunks))]
     )
+
 
     print(f"[OK] Stored embeddings in: {persist_directory}")
 

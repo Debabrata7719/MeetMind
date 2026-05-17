@@ -26,14 +26,17 @@ Upload or record a meeting (MP4 / MP3 / WAV), and the system will:
 | Layer | Technology |
 |---|---|
 | Backend API | FastAPI + Uvicorn |
-| API routing | Modular routers under `api/routes/` |
+| API routing | Modular routers under `api/routes/` and `auth/` |
+| Database | MySQL (User accounts + Meetings) |
+| Auth | bcrypt + python-jose (JWT httpOnly cookies) |
 | Speech-to-text | OpenAI Whisper (`small` model) |
 | Embeddings | `paraphrase-multilingual-MiniLM-L12-v2` (SentenceTransformers) |
 | Vector store | ChromaDB `PersistentClient` — per-meeting collections |
 | LLM | Groq (`openai/gpt-oss-120b`) |
 | LangChain | `ConversationalRetrievalChain` + `ConversationBufferWindowMemory` |
 | Audio extraction | FFmpeg |
-| Frontend | Vanilla HTML / CSS / JavaScript |
+| Frontend | Next.js 15 (App Router) + React |
+| Styling | Tailwind CSS v4 |
 | Export | ReportLab (PDF), python-docx (DOCX) |
 | Testing | Pytest — real pipeline + mocked unit tests |
 | Python | 3.13 |
@@ -71,10 +74,25 @@ Meeting_Intelligence_System/
 │       ├── meeting.py              # POST /notes, /chat, /set-meeting-name, GET /meetings
 │       └── download.py             # GET /download-notes
 │
-├── frontend/
-│   ├── index.html
-│   ├── script.js
-│   └── style.css
+├── auth/                           # Authentication layer
+│   ├── db.py                       # MySQL connection + meeting queries
+│   ├── security.py                 # bcrypt hashes, password rules, JWT signing
+│   ├── models.py                   # Pydantic auth models
+│   ├── router.py                   # POST /register, /login, /logout, GET /me
+│   └── dependencies.py             # JWT httpOnly cookie decoder
+│
+├── frontend/                       # Next.js Application
+│   ├── app/
+│   │   ├── page.tsx                # Animated Landing Page
+│   │   ├── login/                  # Sign in
+│   │   ├── register/               # Sign up
+│   │   └── dashboard/              # Protected meeting interface
+│   ├── components/                 # Reusable React components
+│   ├── lib/
+│   │   ├── api.ts                  # Typed FastAPI client
+│   │   └── auth.ts                 # Auth API helpers
+│   ├── middleware.ts               # Protects /dashboard route
+│   └── package.json
 │
 ├── tests/
 │   ├── conftest.py                 # Session-scoped pipeline fixtures
@@ -93,6 +111,7 @@ Meeting_Intelligence_System/
 │   └── meetings.json               # Meeting name registry
 │
 ├── Notes/                          # Generated highlights (.txt / .pdf / .docx)
+│
 ├── uploads/                        # Uploaded / recorded meeting files
 ├── assets/                         # Screenshots
 ├── main.py                         # FastAPI entry point (thin — wires api/router.py)
@@ -137,25 +156,52 @@ FFmpeg must be available. Either:
 - Install system-wide so it's on `PATH`, **or**
 - Update `_FFMPEG_FALLBACK_BIN` in `app/core/config.py` to point to your local FFmpeg `bin/` folder
 
-### 5. Environment variables
+### 5. MySQL Setup
+
+Create a database named `Meeting_analizer_user` and a `users` and `meetings` table. See `auth/db.py` for schema details.
+
+### 6. Environment variables
 
 Create a `.env` file in the project root:
 
 ```
 GROQ_API_KEY=your_groq_api_key_here
+
+DB_HOST=localhost
+DB_USER=root
+DB_PASSWORD=your_mysql_password
+DB_NAME=Meeting_analizer_user
+
+JWT_SECRET_KEY=your_secure_random_string
+JWT_ALGORITHM=HS256
+JWT_EXPIRE_HOURS=24
 ```
 
-Get a free key at [console.groq.com](https://console.groq.com).
+Create a `.env.local` file inside the `frontend/` folder:
+
+```
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
 
 ---
 
 ## Running the app
 
+Open two terminals:
+
+**Terminal 1 — Backend (FastAPI)**
 ```bash
 uvicorn main:app --reload
 ```
 
-Then open `frontend/index.html` in your browser.
+**Terminal 2 — Frontend (Next.js)**
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Then open `http://localhost:3000` in your browser.
 
 For the full API reference see **[API.md](API.md)**.
 
@@ -167,19 +213,19 @@ For the full API reference see **[API.md](API.md)**.
 Upload / Record
       │
       ▼
-video_to_audio.py   →  FFmpeg extracts 16 kHz mono WAV
+upload.py           →  Enforces 200MB streaming file size limit
       │
       ▼
-audio_to_text.py    →  Whisper (small) transcribes → transcript.txt
+video_to_audio.py   →  FFmpeg extracts audio and splits into 5-minute chunks (chunk_000.wav)
       │
       ▼
-chunk_text.py       →  LangChain splits into 150-char chunks (30 overlap) → chunks.txt
+(Iterative Loop for each 5-minute chunk)
+      ├── audio_to_text.py  →  Whisper (small) transcribes chunk → appends to final transcript.txt
+      ├── chunk_text.py     →  LangChain splits text into 150-char chunks (30 overlap)
+      ├── embed_store.py    →  SentenceTransformers encodes → ChromaDB stores (uuid4 IDs)
+      └── Cleanup           →  Deletes the 5-minute .wav and .txt chunks instantly to free memory
       │
       ▼
-embed_store.py      →  SentenceTransformers encodes → ChromaDB PersistentClient stores
-                        model: paraphrase-multilingual-MiniLM-L12-v2
-                        collection: meeting_chunks  (one DB per meeting_id)
-      │
       ├──▶  highlights.py  →  5 semantic queries → deduplicate → Groq LLM → bullet points
       │                        saved to Notes/highlights_<meeting_id>.txt
       │
@@ -228,6 +274,8 @@ pytest tests/test_services.py -v -s -p no:warnings
 
 **Separated concerns** — `app/` owns all AI and pipeline logic. `api/` owns the HTTP layer. `main.py` is 20 lines that just wire them together. This makes each layer independently testable.
 
+**Chunk-Based Processing** — to protect CPU and memory, large uploads are split into 5-minute `.wav` segments. The pipeline iteratively transcribes, embeds, and deletes each chunk before moving to the next. This prevents server crashes from loading massive files into RAM all at once.
+
 **Per-meeting vector stores** — each meeting gets its own ChromaDB directory under `data/vectordb/<meeting_id>/`. Meetings never pollute each other's retrieval results.
 
 **Embedding model consistency** — `paraphrase-multilingual-MiniLM-L12-v2` is used at both write time (`embed_store.py`) and read time (`chat.py` / `highlights.py`). This was a real bug that was found and fixed — using `all-MiniLM-L6-v2` at read time caused completely wrong retrieval results.
@@ -248,5 +296,4 @@ pytest tests/test_services.py -v -s -p no:warnings
 - Sentiment analysis per speaker
 - Action item auto-assignment
 - Multi-language highlight extraction
-- Authentication / API key middleware
 - Docker containerization

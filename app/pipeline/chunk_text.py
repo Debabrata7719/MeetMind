@@ -4,9 +4,10 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def chunk_text(transcript_path):
+def chunk_text(transcript_path: str, meeting_id: str, chunk_index: int):
 
-    output_folder = os.path.join(BASE_DIR, "data", "intermediate")
+    output_folder = os.path.join(BASE_DIR, "data", "intermediate", meeting_id)
+
     os.makedirs(output_folder, exist_ok=True)
 
     # read transcript
@@ -22,7 +23,8 @@ def chunk_text(transcript_path):
     chunks = splitter.split_text(text)
 
     # save chunks
-    output_path = os.path.join(output_folder, "chunks.txt")
+    output_path = os.path.join(output_folder, f"chunks_chunk_{chunk_index}.txt")
+
 
     with open(output_path, "w", encoding="utf-8") as f:
         for i, chunk in enumerate(chunks, 1):

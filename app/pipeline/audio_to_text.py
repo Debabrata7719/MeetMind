@@ -11,14 +11,15 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 model = whisper.load_model("small")
 
 
-def audio_to_text(audio_path):
+def audio_to_text(audio_path: str, meeting_id: str, chunk_index: int):
 
-    output_folder = os.path.join(BASE_DIR, "data", "intermediate")
+    output_folder = os.path.join(BASE_DIR, "data", "intermediate", meeting_id)
     os.makedirs(output_folder, exist_ok=True)
 
     result = model.transcribe(audio_path, task="translate")
 
-    output_file = os.path.join(output_folder, "transcript.txt")
+    output_file = os.path.join(output_folder, f"transcript_chunk_{chunk_index}.txt")
+
 
     segments = result["segments"]
 
