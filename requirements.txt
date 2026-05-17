@@ -3,6 +3,12 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart
 pydantic
+pydantic[email]
+
+# ─── Database & Auth ──────────────────────────────────────
+mysql-connector-python
+bcrypt==4.0.1
+python-jose[cryptography]
 
 # ─── AI / Speech ──────────────────────────────────────────
 openai-whisper
