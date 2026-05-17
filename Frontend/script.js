@@ -1,6 +1,8 @@
-// const API_BASE="http://127.0.0.1:8000";  #For local host
+const API_BASE="http://127.0.0.1:8000";  
+// For local host
 
-const API_BASE="https://bungee-moonlike-almighty.ngrok-free.dev";  
+// const API_BASE="https://bungee-moonlike-almighty.ngrok-free.dev";  
+// For ngrok using change continuously
 
 /* ================= ELEMENTS ================= */
 const dropZone=document.getElementById("dropZone");
