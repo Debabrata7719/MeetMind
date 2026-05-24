@@ -13,7 +13,7 @@ Turn meeting recordings into searchable knowledge — transcription, highlights,
 Upload or record a meeting (MP4 / MP3 / WAV), and the system will:
 
 1. Extract audio with FFmpeg
-2. Transcribe speech with OpenAI Whisper
+2. Transcribe speech with faster-whisper
 3. Chunk and embed the transcript into a per-meeting ChromaDB vector store
 4. Let you generate bullet-point highlights via Groq LLM
 5. Let you chat with the meeting — ask any question, get answers grounded only in what was said
@@ -29,7 +29,7 @@ Upload or record a meeting (MP4 / MP3 / WAV), and the system will:
 | API routing | Modular routers under `api/routes/` and `auth/` |
 | Database | MySQL (User accounts + Meetings) |
 | Auth | bcrypt + python-jose (JWT httpOnly cookies) |
-| Speech-to-text | OpenAI Whisper (`small` model) |
+| Speech-to-text | faster-whisper (`small` model, CTranslate2 backend) |
 | Embeddings | `paraphrase-multilingual-MiniLM-L12-v2` (SentenceTransformers) |
 | Vector store | ChromaDB `PersistentClient` — per-meeting collections |
 | LLM | Groq (`openai/gpt-oss-120b`) |
@@ -53,7 +53,7 @@ Meeting_Intelligence_System/
 │   │   └── config.py               # Central paths + FFmpeg auto-discovery
 │   ├── pipeline/
 │   │   ├── video_to_audio.py       # FFmpeg: MP4/MP3 → 16kHz mono WAV
-│   │   ├── audio_to_text.py        # Whisper: WAV → transcript.txt
+│   │   ├── audio_to_text.py        # faster-whisper: WAV → transcript.txt
 │   │   ├── chunk_text.py           # LangChain splitter → chunks.txt
 │   │   └── pipeline.py             # LangChain sequential chain
 │   ├── storage/
@@ -220,7 +220,7 @@ video_to_audio.py   →  FFmpeg extracts audio and splits into 5-minute chunks (
       │
       ▼
 (Iterative Loop for each 5-minute chunk)
-      ├── audio_to_text.py  →  Whisper (small) transcribes chunk → appends to final transcript.txt
+       ├── audio_to_text.py  →  faster-whisper (small) transcribes chunk → appends to final transcript.txt
       ├── chunk_text.py     →  LangChain splits text into 150-char chunks (30 overlap)
       ├── embed_store.py    →  SentenceTransformers encodes → ChromaDB stores (uuid4 IDs)
       └── Cleanup           →  Deletes the 5-minute .wav and .txt chunks instantly to free memory
@@ -257,14 +257,14 @@ pytest tests/test_services.py -v -s -p no:warnings
 |---|---|---|---|
 | 1 | `test_api.py` | Fast (mocked) | FastAPI HTTP endpoints |
 | 2 | `test_video_to_audio.py` | Fast | FFmpeg extraction from `test_video.mp4` |
-| 3 | `test_audio_to_text.py` | Slow (~4 min) | Whisper transcription |
+| 3 | `test_audio_to_text.py` | Fast (~60 sec) | faster-whisper transcription |
 | 4 | `test_chunk_text.py` | Fast | Text chunking with real transcript |
 | 5 | `test_embed_store.py` | Medium | ChromaDB embedding + retrieval |
 | 6 | `test_highlights.py` | Fast/Skipped | Highlights (mocked LLM + real LLM) |
 | 7 | `test_chat.py` | Fast/Skipped | Chat Q&A (mocked LLM + real LLM) |
 | 8 | `test_services.py` | Slow (~4 min) | Full end-to-end through services layer |
 
-- Whisper runs **once per session** — subsequent test files reuse the cached result
+- faster-whisper runs **once per session** — subsequent test files reuse the cached result
 - LLM tests (highlights, chat, services steps 5-6) auto-skip if `GROQ_API_KEY` is not set
 - Recording tests are skipped (requires audio hardware)
 

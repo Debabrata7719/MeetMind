@@ -1,13 +1,14 @@
 """
-tests/test_audio_to_text.py
+tests/test_audio_to_text.py (FASTER-WHISPER COMPATIBLE)
 
 Tests for app/pipeline/audio_to_text.py
 
 Uses the REAL WAV extracted from uploads/test_video.mp4
-and the REAL Whisper model — no mocks, no fake audio.
+and the REAL faster-whisper model — no mocks, no fake audio.
 
-NOTE: Whisper runs once per session via the session-scoped fixture.
-      First run takes ~1-2 min on CPU; subsequent tests are instant.
+NOTE: faster-whisper runs once per session via the session-scoped fixture.
+      First run takes ~30-60 seconds on CPU; subsequent tests are instant.
+      (4x faster than openai-whisper)
 """
 
 import re
@@ -25,18 +26,18 @@ def test_audio_to_text_returns_path(real_transcript_path):
 
 
 def test_audio_to_text_file_exists(real_transcript_path):
-    """transcript.txt must exist on disk."""
+    """transcript_chunk_0.txt must exist on disk."""
     assert Path(real_transcript_path).exists()
 
 
 def test_audio_to_text_correct_filename(real_transcript_path):
-    """Output filename must be transcript.txt."""
-    assert Path(real_transcript_path).name == "transcript.txt"
+    """Output filename must be transcript_chunk_0.txt (for chunk 0)."""
+    assert Path(real_transcript_path).name == "transcript_chunk_0.txt"
 
 
 def test_audio_to_text_correct_directory(real_transcript_path):
-    """Transcript must be saved in data/intermediate/."""
-    assert Path(real_transcript_path).parent == INTERMEDIATE_DIR
+    """Transcript must be saved in data/intermediate/<meeting_id>/."""
+    assert INTERMEDIATE_DIR in Path(real_transcript_path).parents
 
 
 def test_audio_to_text_is_nonempty(real_transcript_text):
@@ -67,7 +68,15 @@ def test_audio_to_text_file_size(real_transcript_path):
 
 
 def test_audio_to_text_preview(real_transcript_text):
-    """Print a preview so the CI log shows what was transcribed."""
+    """Print a preview so the test log shows what was transcribed."""
     preview = real_transcript_text.strip()[:300]
     print(f"\n[PREVIEW]\n{preview}")
     assert True  # always passes — informational only
+
+
+def test_audio_to_text_faster_whisper_signature():
+    """Verify that faster-whisper is properly imported and loaded."""
+    from app.pipeline.audio_to_text import model
+
+    assert model is not None, "faster-whisper model not loaded"
+    print("\n[OK] faster-whisper model loaded successfully")
