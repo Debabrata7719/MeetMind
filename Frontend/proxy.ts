@@ -1,13 +1,13 @@
 /**
- * frontend/middleware.ts
+ * frontend/proxy.ts
  *
- * Next.js Edge Middleware — runs before every request.
+ * Next.js Proxy — runs before every request.
  * Protects /dashboard: redirects to /login if no valid access_token cookie.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const token = request.cookies.get("access_token")?.value;
   const { pathname } = request.nextUrl;
 
