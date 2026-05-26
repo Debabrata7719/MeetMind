@@ -214,13 +214,14 @@ Upload / Record
       │
       ▼
 upload.py           →  Enforces 200MB streaming file size limit
+                       ⚠️  NOTE: Runs in threadpool but BLOCKS HTTP response until complete
       │
       ▼
 video_to_audio.py   →  FFmpeg extracts audio and splits into 5-minute chunks (chunk_000.wav)
       │
       ▼
 (Iterative Loop for each 5-minute chunk)
-       ├── audio_to_text.py  →  faster-whisper (small) transcribes chunk → appends to final transcript.txt
+       ├── audio_to_text.py  →  faster-whisper (small, task="translate") transcribes chunk → appends to final transcript.txt
       ├── chunk_text.py     →  LangChain splits text into 150-char chunks (30 overlap)
       ├── embed_store.py    →  SentenceTransformers encodes → ChromaDB stores (uuid4 IDs)
       └── Cleanup           →  Deletes the 5-minute .wav and .txt chunks instantly to free memory
@@ -229,11 +230,14 @@ video_to_audio.py   →  FFmpeg extracts audio and splits into 5-minute chunks (
       ├──▶  highlights.py  →  5 semantic queries → deduplicate → Groq LLM → bullet points
       │                        saved to Notes/highlights_<meeting_id>.txt
       │
-      └──▶  chat.py        →  ConversationalRetrievalChain (k=7) + memory (5 turns)
-                               → Groq LLM → context-only answer
+      └──▶  chat.py        →  ConversationalRetrievalChain (k=7) + ConversationBufferWindowMemory (5 turns)
+                                → Groq LLM → context-only answer
+                                ⚠️  NOTE: Memory is in-process, lost on server restart
 ```
 
 > **Critical:** `embed_store.py`, `chat.py`, and `highlights.py` all use `paraphrase-multilingual-MiniLM-L12-v2`. Using a different model at query time vs store time silently breaks semantic search and returns garbage results.
+
+> **Important:** Upload endpoint uses `run_in_threadpool` but still blocks the HTTP response until the entire pipeline completes. For large files (>1 hour), this can cause timeouts. True async processing with job queues is on the roadmap.
 
 ---
 
@@ -272,7 +276,7 @@ pytest tests/test_services.py -v -s -p no:warnings
 
 ## Key design decisions
 
-**Separated concerns** — `app/` owns all AI and pipeline logic. `api/` owns the HTTP layer. `main.py` is 20 lines that just wire them together. This makes each layer independently testable.
+**Separated concerns** — `app/` owns all AI and pipeline logic. `api/` owns the HTTP layer. `auth/` owns authentication. `main.py` is thin and just wires them together. This makes each layer independently testable.
 
 **Chunk-Based Processing** — to protect CPU and memory, large uploads are split into 5-minute `.wav` segments. The pipeline iteratively transcribes, embeds, and deletes each chunk before moving to the next. This prevents server crashes from loading massive files into RAM all at once.
 
@@ -285,6 +289,8 @@ pytest tests/test_services.py -v -s -p no:warnings
 **Session-scoped test fixtures** — FFmpeg and Whisper run once per `pytest` session. All test files share the results via `conftest.py` fixtures, keeping total test time reasonable.
 
 **Python 3.13 compatibility** — `conftest.py` patches `importlib.util.find_spec` to handle `soundfile.__spec__ = None`, which causes `ValueError` in Python 3.13 when `transformers` checks for soundfile availability.
+
+**User authentication & meeting isolation** — JWT httpOnly cookies + bcrypt hashing ensures secure sessions. Meeting ownership is enforced on `/chat`, `/notes`, `/set-meeting-name`, and `/meetings` endpoints. All meetings are scoped to the authenticated user.
 
 ---
 

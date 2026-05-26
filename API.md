@@ -246,6 +246,8 @@ List all saved meetings in reverse chronological order.
 
 Download the highlights for a meeting as PDF, TXT, or DOCX.
 
+**⚠️  SECURITY WARNING:** This endpoint currently has **no authentication checks**. Anyone who knows a `meeting_id` can download that meeting's files. Auth enforcement is being added.
+
 **Query parameters**
 
 | Parameter | Type | Required | Values |
@@ -270,6 +272,7 @@ Download the highlights for a meeting as PDF, TXT, or DOCX.
 - PDF is built with ReportLab, DOCX with python-docx.
 - The meeting name is included in the file header and filename.
 - Generate highlights first via `POST /notes` before downloading.
+- **TODO:** Add `user: dict = Depends(get_current_user)` and ownership verification.
 
 ---
 
@@ -289,7 +292,24 @@ Errors from `/download-notes` and `/meetings` are always returned as `200` with 
 
 ## Authentication
 
-No authentication is implemented. The API is intended for local use. Do not expose it publicly without adding auth middleware.
+Authentication is implemented via JWT tokens stored in httpOnly cookies:
+
+**Registration & Login:**
+- `POST /auth/register` — Create new user account with email + password
+- `POST /auth/login` — Login returns JWT in httpOnly cookie (24-hour expiry)
+- `GET /auth/me` — Check current session, returns `{user_id, email}`
+- `POST /auth/logout` — Clears the auth cookie
+
+**Requirements:**
+- Password must be 8+ chars, with uppercase, lowercase, digit, special character
+- All endpoints except `/auth/register` and `/auth/login` require valid JWT cookie
+- Meeting access is scoped to the authenticated user (ownership checks on `/chat`, `/notes`, `/set-meeting-name`, `/meetings`)
+
+**Known Issues:**
+- ⚠️  `GET /download-notes` does NOT check authentication (see endpoint notes above)
+- Password reset flow not implemented
+- No email verification on registration
+- No brute-force protection on login/register
 
 ---
 
@@ -299,7 +319,44 @@ All origins are allowed (`*`). Configured in `main.py` via `CORSMiddleware`.
 
 ---
 
-## Running the server
+## Missing Endpoints (Planned)
+
+The following endpoints are referenced by the frontend but not yet implemented:
+
+**GET /status/{meeting_id}**  
+Returns the processing status of a meeting upload.
+
+```json
+{
+  "status": "queued | processing | complete | failed",
+  "progress": 0-100,
+  "stage": "extracting_audio | transcribing | embedding | done",
+  "error_message": null
+}
+```
+
+**Expected behavior:** After uploading, poll this endpoint to track progress instead of waiting for `/upload` to complete.
+
+**GET /upload-history**  
+Returns list of all meetings for the authenticated user.
+
+```json
+[
+  {
+    "meeting_id": "a3f9c2d1e4b7...",
+    "name": "Weekly Team Sync",
+    "status": "complete",
+    "created_at": "2026-05-26T10:30:00Z",
+    "duration_seconds": 3600
+  }
+]
+```
+
+**Expected behavior:** Used by the dashboard to show upload history with status.
+
+**Note:** These endpoints are required for true async processing. Currently, `/upload` blocks until the entire pipeline completes.
+
+---
 
 ```bash
 uvicorn main:app --reload
