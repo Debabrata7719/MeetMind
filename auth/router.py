@@ -107,7 +107,13 @@ def login(payload: LoginRequest, response: Response):
 
 @router.post("/logout")
 def logout(response: Response):
-    response.delete_cookie(key=COOKIE_NAME, path="/")
+    response.delete_cookie(
+        key=COOKIE_NAME, 
+        path="/",
+        httponly=True,
+        samesite="lax",
+        secure=False
+    )
     return {"message": "Logged out"}
 
 
