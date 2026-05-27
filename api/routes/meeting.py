@@ -48,7 +48,7 @@ async def chat(payload: ChatRequest, user: dict = Depends(get_current_user)):
     _assert_ownership(payload.meeting_id, user["user_id"])
     try:
         answer = await run_in_threadpool(
-            ask_question, payload.question, payload.meeting_id
+            ask_question, payload.question, payload.meeting_id, user["user_id"]
         )
         return {"answer": answer}
     except Exception:

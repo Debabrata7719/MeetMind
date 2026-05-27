@@ -1,15 +1,16 @@
 """
 api/routes/upload.py
 
-POST /upload — accept MP4/MP3/WAV, run full pipeline, save meeting to MySQL.
+POST /upload — accept MP4/MP3/WAV, save file, kick off pipeline in background.
+Returns immediately with meeting_id so the frontend can poll /status/{meeting_id}.
 Requires authentication (httpOnly JWT cookie).
 """
 
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
-from starlette.concurrency import run_in_threadpool
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks
 
 from app.services import process_meeting
+from app.core.job_progress import set_job_queued
 from auth.dependencies import get_current_user
 from auth.db import save_meeting
 
@@ -23,6 +24,7 @@ ALLOWED_EXTENSIONS = {".mp4", ".mp3", ".wav"}
 
 @router.post("/upload")
 async def upload(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     user: dict = Depends(get_current_user),
 ):
@@ -48,20 +50,23 @@ async def upload(
                     raise HTTPException(413, "File exceeds 200MB limit")
                 f.write(chunk)
 
-        await run_in_threadpool(process_meeting, str(file_path), meeting_id)
-
-        # Save meeting to MySQL under this user
+        # Save meeting to MySQL immediately so it appears in history
         save_meeting(meeting_id, user["user_id"], original_name)
+
+        # Initialize job status in Redis as "queued"
+        set_job_queued(meeting_id)
+
+        # Kick off the pipeline in the background — response returns immediately
+        background_tasks.add_task(process_meeting, str(file_path), meeting_id)
 
     except HTTPException:
         raise
     except Exception:
         import traceback
         traceback.print_exc()
-        raise HTTPException(500, "Pipeline crashed")
-
+        raise HTTPException(500, "Upload failed")
 
     return {
-        "message": "meeting processed successfully",
+        "message": "Upload received — processing started",
         "meeting_id": meeting_id,
     }

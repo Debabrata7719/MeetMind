@@ -5,29 +5,31 @@ GET /download-notes — download highlights as PDF, TXT, or DOCX.
 """
 
 import os
-import json
 from datetime import datetime
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from docx import Document
 
+from auth.dependencies import get_current_user
+from auth.db import get_meeting_name
+
 router = APIRouter()
 
 
 @router.get("/download-notes")
-def download_notes(meeting_id: str, format: str = "pdf"):
+def download_notes(
+    meeting_id: str,
+    format: str = "pdf",
+    user: dict = Depends(get_current_user)
+):
 
-    # ── resolve meeting name ──────────────────────────────
-    meeting_name = meeting_id
-    mapping_file = "data/meetings.json"
-
-    if os.path.exists(mapping_file):
-        with open(mapping_file) as f:
-            db = json.load(f)
-            meeting_name = db.get(meeting_id, meeting_id)
+    # ── resolve meeting name and verify ownership ─────────
+    meeting_name = get_meeting_name(meeting_id, user["user_id"])
+    if not meeting_name:
+        raise HTTPException(status_code=403, detail="Meeting not found or access denied")
 
     meeting_name = "".join(
         c for c in meeting_name if c.isalnum() or c in (" ", "-", "_")
