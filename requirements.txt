@@ -9,6 +9,7 @@ pydantic[email]
 mysql-connector-python
 bcrypt==4.0.1
 python-jose[cryptography]
+redis
 
 # ─── AI / Speech ──────────────────────────────────────────
 faster-whisper

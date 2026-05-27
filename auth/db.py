@@ -79,3 +79,18 @@ def meeting_belongs_to_user(meeting_id: str, user_id: int) -> bool:
     conn.close()
     return found
 
+
+def get_meeting_name(meeting_id: str, user_id: int) -> str | None:
+    """Retrieve the name of a meeting belonging to user_id. Returns None if not found."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT name FROM meetings WHERE meeting_id=%s AND user_id=%s",
+        (meeting_id, user_id),
+    )
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return row[0] if row else None
+
+

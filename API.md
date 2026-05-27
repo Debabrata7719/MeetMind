@@ -61,7 +61,7 @@ Health check.
 
 ### POST /upload
 
-Upload a meeting file (MP4, MP3, or WAV). Runs the full pipeline automatically:
+Upload a meeting file (MP4, MP3, or WAV). Kicks off the background pipeline:
 video → audio → transcript → chunks → embeddings.
 
 **Request** — `multipart/form-data`
@@ -73,7 +73,7 @@ video → audio → transcript → chunks → embeddings.
 **Response 200**
 ```json
 {
-  "message": "meeting processed successfully",
+  "message": "meeting uploaded successfully. processing started in background.",
   "meeting_id": "a3f9c2d1e4b7..."
 }
 ```
@@ -83,15 +83,32 @@ video → audio → transcript → chunks → embeddings.
 { "detail": "Only mp4/mp3/wav allowed" }
 ```
 
-**Response 500** — pipeline crashed
-```json
-{ "detail": "Pipeline crashed" }
-```
-
 **Notes**
 - `meeting_id` is a UUID hex string generated per upload.
-- The file is saved to `uploads/<meeting_id>.<ext>`.
-- Pipeline runs asynchronously in a thread pool.
+- Pipeline runs asynchronously using FastAPI BackgroundTasks.
+- Returns immediately. The frontend must poll `/status/{meeting_id}` to track progress.
+
+---
+
+### GET /status/{meeting_id}
+
+Returns the live processing status of a meeting upload by querying Redis.
+
+**Response 200**
+```json
+{
+  "status": "queued | processing | complete | failed",
+  "progress": 75,
+  "stage": "extracting_audio | transcribing | embedding | done",
+  "detail": "Transcribing chunk 2/5",
+  "error": ""
+}
+```
+
+**Response 404** — job not found
+```json
+{ "detail": "Job not found" }
+```
 
 ---
 
@@ -161,9 +178,8 @@ Generate bullet-point highlights for a meeting using Groq LLM.
 ```
 
 **Notes**
-- Runs 5 semantic retrieval queries against the meeting's ChromaDB collection.
+- Highlights are cached in Redis. The first request takes time; subsequent requests return instantly.
 - Deduplicates retrieved chunks before sending to LLM.
-- Saves highlights to `Notes/highlights_<meeting_id>.txt`.
 - Requires `GROQ_API_KEY` in `.env`.
 
 ---
@@ -219,8 +235,7 @@ Save a human-readable name for a meeting.
 ```
 
 **Notes**
-- Names are persisted to `data/meetings.json`.
-- If the file doesn't exist it is created automatically.
+- Names are persisted in the MySQL database under the authenticated user.
 
 ---
 
@@ -244,9 +259,7 @@ List all saved meetings in reverse chronological order.
 
 ### GET /download-notes
 
-Download the highlights for a meeting as PDF, TXT, or DOCX.
-
-**⚠️  SECURITY WARNING:** This endpoint currently has **no authentication checks**. Anyone who knows a `meeting_id` can download that meeting's files. Auth enforcement is being added.
+Download the highlights for a meeting as PDF, TXT, or DOCX. Requires authentication (httpOnly JWT cookie) and meeting ownership verification.
 
 **Query parameters**
 
@@ -270,9 +283,8 @@ Download the highlights for a meeting as PDF, TXT, or DOCX.
 **Notes**
 - Reads from `Notes/highlights_<meeting_id>.txt`.
 - PDF is built with ReportLab, DOCX with python-docx.
-- The meeting name is included in the file header and filename.
+- The meeting name is resolved from the MySQL database and included in the file header and filename.
 - Generate highlights first via `POST /notes` before downloading.
-- **TODO:** Add `user: dict = Depends(get_current_user)` and ownership verification.
 
 ---
 
@@ -306,7 +318,6 @@ Authentication is implemented via JWT tokens stored in httpOnly cookies:
 - Meeting access is scoped to the authenticated user (ownership checks on `/chat`, `/notes`, `/set-meeting-name`, `/meetings`)
 
 **Known Issues:**
-- ⚠️  `GET /download-notes` does NOT check authentication (see endpoint notes above)
 - Password reset flow not implemented
 - No email verification on registration
 - No brute-force protection on login/register
@@ -319,44 +330,7 @@ All origins are allowed (`*`). Configured in `main.py` via `CORSMiddleware`.
 
 ---
 
-## Missing Endpoints (Planned)
 
-The following endpoints are referenced by the frontend but not yet implemented:
-
-**GET /status/{meeting_id}**  
-Returns the processing status of a meeting upload.
-
-```json
-{
-  "status": "queued | processing | complete | failed",
-  "progress": 0-100,
-  "stage": "extracting_audio | transcribing | embedding | done",
-  "error_message": null
-}
-```
-
-**Expected behavior:** After uploading, poll this endpoint to track progress instead of waiting for `/upload` to complete.
-
-**GET /upload-history**  
-Returns list of all meetings for the authenticated user.
-
-```json
-[
-  {
-    "meeting_id": "a3f9c2d1e4b7...",
-    "name": "Weekly Team Sync",
-    "status": "complete",
-    "created_at": "2026-05-26T10:30:00Z",
-    "duration_seconds": 3600
-  }
-]
-```
-
-**Expected behavior:** Used by the dashboard to show upload history with status.
-
-**Note:** These endpoints are required for true async processing. Currently, `/upload` blocks until the entire pipeline completes.
-
----
 
 ```bash
 uvicorn main:app --reload

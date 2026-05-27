@@ -34,6 +34,7 @@ def _make_mocks():
         "sentence_transformers":          st,
         "chromadb":                       MagicMock(),
         "whisper":                        MagicMock(),
+        "faster_whisper":                 MagicMock(),
         "sounddevice":                    MagicMock(),
         "soundfile":                      MagicMock(),
         "langchain_text_splitters":       lts,
@@ -70,10 +71,15 @@ def client():
         import app.services as svc
 
     # Now patch the bound names on the already-imported svc module
-    with patch.object(svc, "run_pipeline", return_value="data/intermediate/chunks.txt"), \
+    with patch.object(svc, "process_meeting"), \
          patch.object(svc, "embed_store"), \
          patch.object(svc, "extract_highlights", return_value="• Test highlight"), \
-         patch.object(svc, "chat_ask", return_value="Test answer"):
+         patch.object(svc, "chat_ask", return_value="Test answer"), \
+         patch("auth.db.meeting_belongs_to_user", return_value=True), \
+         patch("auth.db.get_meeting_name", return_value="Test Video Meeting"), \
+         patch("auth.db.save_meeting"), \
+         patch("auth.db.update_meeting_name", return_value=True), \
+         patch("auth.db.get_user_meetings", return_value=[{"id": REAL_MEETING_ID, "name": "Test Video Meeting"}]):
 
         # Wipe api/main so they re-import and pick up patched svc
         for key in list(sys.modules.keys()):
@@ -81,6 +87,9 @@ def client():
                 del sys.modules[key]
 
         import main
+        from auth.dependencies import get_current_user
+        main.app.dependency_overrides[get_current_user] = lambda: {"user_id": 1, "email": "test@example.com"}
+
         from fastapi.testclient import TestClient
         yield TestClient(main.app)
 
