@@ -3,14 +3,21 @@ from langchain_community.embeddings import SentenceTransformerEmbeddings
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 import os
+import redis
 from dotenv import load_dotenv
 
 load_dotenv()
 
-
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 def extract_highlights(meeting_id: str):
+    cache_key = f"highlights:{meeting_id}"
+    cached = redis_client.get(cache_key)
+    if cached:
+        print(f"[INFO] Returning cached highlights for {meeting_id} from Redis")
+        return cached
 
-    print("[INFO] Extracting meeting highlights...")
+    print("[INFO] Extracting meeting highlights from VectorDB...")
 
     # ========= Embedding =========
     # MUST match the model used in embed_store.py
@@ -52,7 +59,7 @@ def extract_highlights(meeting_id: str):
 
     # ========= LLM =========
     llm = ChatGroq(
-        model_name="openai/gpt-oss-120b",
+        model_name="llama-3.3-70b-versatile",
         temperature=0
     )
 
@@ -80,11 +87,8 @@ Meeting Text:
 
     result = chain.invoke({"text": context}).content
 
-    # ========= Save =========
-    os.makedirs("Notes", exist_ok=True)
+    # ========= Cache in Redis =========
+    redis_client.set(cache_key, result)
 
-    with open(f"Notes/highlights_{meeting_id}.txt", "w", encoding="utf-8") as f:
-        f.write(result)
-
-    print("[OK] Highlights saved")
+    print("[OK] Highlights generated and cached in Redis")
     return result

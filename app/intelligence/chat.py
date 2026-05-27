@@ -3,6 +3,7 @@
 # ===============================
 from dotenv import load_dotenv
 from pathlib import Path
+import os
 
 load_dotenv()
 
@@ -13,6 +14,7 @@ load_dotenv()
 from langchain_groq import ChatGroq
 from langchain_chroma import Chroma
 from langchain_community.embeddings import SentenceTransformerEmbeddings
+from langchain_community.chat_message_histories import RedisChatMessageHistory
 
 from langchain_classic.chains import ConversationalRetrievalChain
 from langchain_classic.memory import ConversationBufferWindowMemory
@@ -25,6 +27,8 @@ from langchain_core.prompts import PromptTemplate
 # ===============================
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 VECTORDB_DIR = BASE_DIR / "data" / "vectordb"
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 
 # ===============================
@@ -40,8 +44,8 @@ embedding = SentenceTransformerEmbeddings(
 # LLM (load once)
 # ===============================
 llm = ChatGroq(
-    model_name="openai/gpt-oss-120b",
-    temperature=0
+    model_name="llama-3.3-70b-versatile",
+    temperature=0.3
 )
 
 
@@ -83,24 +87,23 @@ prompt = PromptTemplate(
 
 
 # ===============================
-# CHAIN CACHE — persists memory across API calls
-# key: meeting_id → value: chain instance with memory
+# RETRIEVER CACHE — reuse Chroma connection per meeting
+# key: meeting_id → value: retriever instance
 # ===============================
-_chain_cache: dict = {}
+_retriever_cache: dict = {}
 
 
 # ===============================
-# HELPER → Load DB for meeting
+# HELPER → Load retriever for meeting
 # ===============================
-def load_chain(meeting_id: str):
+def _get_retriever(meeting_id: str):
     """
-    Returns a cached chain for the meeting so memory persists
-    across multiple API calls in the same session.
-    Creates a new chain only on first call for that meeting_id.
+    Returns a cached retriever for the meeting.
+    Chroma DB connections are reusable and stateless.
     """
 
-    if meeting_id in _chain_cache:
-        return _chain_cache[meeting_id]
+    if meeting_id in _retriever_cache:
+        return _retriever_cache[meeting_id]
 
     db_path = VECTORDB_DIR / meeting_id
 
@@ -117,12 +120,42 @@ def load_chain(meeting_id: str):
         search_kwargs={"k": 7}
     )
 
+    _retriever_cache[meeting_id] = retriever
+    return retriever
+
+
+# ===============================
+# MAIN FUNCTION (API safe)
+# ===============================
+def ask_question(query: str, meeting_id: str, user_id: int) -> str:
+    """
+    Called by FastAPI.
+
+    Each user + meeting combination:
+      → separate vectordb retriever (cached)
+      → separate Redis-backed memory (survives restarts + multi-worker)
+    """
+
+    if not query.strip():
+        return "Please ask a valid question."
+
+    retriever = _get_retriever(meeting_id)
+
+    # Redis-backed chat history — scoped per user + meeting
+    session_id = f"chat:{user_id}:{meeting_id}"
+    chat_history = RedisChatMessageHistory(
+        session_id=session_id,
+        url=REDIS_URL,
+    )
+
     memory = ConversationBufferWindowMemory(
         k=5,
         memory_key="chat_history",
-        return_messages=True
+        return_messages=True,
+        chat_memory=chat_history,
     )
 
+    # Build chain fresh each request with Redis-backed memory
     chain = ConversationalRetrievalChain.from_llm(
         llm=llm,
         retriever=retriever,
@@ -130,28 +163,7 @@ def load_chain(meeting_id: str):
         combine_docs_chain_kwargs={"prompt": prompt}
     )
 
-    _chain_cache[meeting_id] = chain
-    return chain
-
-
-# ===============================
-# MAIN FUNCTION (API safe)
-# ===============================
-def ask_question(query: str, meeting_id: str) -> str:
-    """
-    Called by FastAPI.
-
-    Each meeting:
-      → separate vectordb
-      → separate memory
-    """
-
-    if not query.strip():
-        return "Please ask a valid question."
-
-    qa_chain = load_chain(meeting_id)
-
-    result = qa_chain.invoke({
+    result = chain.invoke({
         "question": query.strip()
     })
 

@@ -18,7 +18,6 @@ INTERMEDIATE_DIR = DATA_DIR / "intermediate"
 VECTORDB_DIR     = DATA_DIR / "vectordb"
 NOTES_DIR        = BASE_DIR / "Notes"
 UPLOADS_DIR      = BASE_DIR / "uploads"
-MEETINGS_FILE    = DATA_DIR / "meetings.json"
 
 # ──────────────────────────────────────────────
 # FFmpeg — search PATH first, then known local install
