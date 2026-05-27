@@ -20,7 +20,9 @@ import {
   askQuestion,
   setMeetingName,
   getDownloadUrl,
+  getJobStatus,
   type Meeting,
+  type JobStatus,
 } from "@/lib/api";
 import { apiLogout, apiMe } from "@/lib/auth";
 
@@ -51,6 +53,11 @@ export default function DashboardPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadStatus, setUploadStatus] = useState("No file selected");
   const [isDragging, setIsDragging] = useState(false);
+
+  // Job progress
+  const [jobProgress, setJobProgress] = useState<JobStatus | null>(null);
+  const [processingMeetingId, setProcessingMeetingId] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Recording
   const [recStatus, setRecStatus] = useState<RecStatus>("idle");
@@ -190,26 +197,93 @@ export default function DashboardPage() {
     handleFileChange(e.dataTransfer.files[0] ?? null);
   };
 
+  // ── Stop polling helper ──
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
+
+  // ── Start polling job progress ──
+  const startPolling = useCallback((meetingId: string) => {
+    stopPolling();
+    setProcessingMeetingId(meetingId);
+    setJobProgress({ status: "queued", stage: "queued", detail: "Initializing…", progress: 0, error: "" });
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const status = await getJobStatus(meetingId);
+        setJobProgress(status);
+
+        if (status.status === "done") {
+          stopPolling();
+          setProcessingMeetingId(null);
+          setJobProgress(null);
+          setMeetingReady(true);
+          setNotesPlaceholder("Meeting loaded. Click Generate for highlights.");
+          setNotesLines([]);
+          setNotesEmpty(true);
+          setChatMessages([{ role: "assistant", text: "Meeting processed successfully!" }]);
+          setNameInput("");
+          setNameModalVisible(true);
+          loadHistory();
+        } else if (status.status === "failed") {
+          stopPolling();
+        }
+      } catch {
+        // Network blip — keep polling
+      }
+    }, 2000);
+  }, [stopPolling, loadHistory]);
+
+  // Clean up polling on unmount
+  useEffect(() => {
+    return () => stopPolling();
+  }, [stopPolling]);
+
   // ── Upload ──
   const handleUpload = async () => {
     if (!selectedFile) { setUploadStatus("Select a file first"); return; }
-    showLoader("Processing meeting…");
+    
+    // Show the progress overlay immediately for the file upload phase
+    setJobProgress({ 
+      status: "processing", 
+      stage: "uploading", 
+      detail: "Sending file to server…", 
+      progress: 0, 
+      error: "" 
+    });
+
     try {
-      const data = await uploadMeeting(selectedFile);
+      const data = await uploadMeeting(selectedFile, (pct) => {
+        setJobProgress({ 
+          status: "processing", 
+          stage: "uploading", 
+          detail: "Sending file to server…", 
+          progress: pct, 
+          error: "" 
+        });
+      });
       setCurrentMeetingId(data.meeting_id);
-      setMeetingReady(true);
-      setNotesPlaceholder("Ready to generate highlights.");
-      setNotesLines([]);
-      setNotesEmpty(true);
-      setChatMessages([{ role: "assistant", text: "Meeting uploaded successfully!" }]);
-      setUploadStatus("Uploaded!");
-      setNameInput("");
-      setNameModalVisible(true);
+      loadHistory();
+      // Start polling for backend AI processing progress
+      startPolling(data.meeting_id);
     } catch {
-      setUploadStatus("Upload failed. Please try again.");
-    } finally {
-      hideLoader();
+      setJobProgress({ 
+        status: "failed", 
+        stage: "failed", 
+        detail: "", 
+        progress: 0, 
+        error: "Failed to upload file to the server. Please try again." 
+      });
+      setUploadStatus("Upload failed.");
     }
+  };
+
+  // ── Retry failed job ──
+  const handleRetry = () => {
+    if (!processingMeetingId) return;
+    setJobProgress(null);
+    setProcessingMeetingId(null);
+    // User can re-upload or select another file
   };
 
   // ── Notes ──
@@ -280,12 +354,56 @@ export default function DashboardPage() {
   return (
     <div className="dashboard-body">
 
-      {/* ── Loader ── */}
+      {/* ── Loader (for notes generation etc.) ── */}
       {loaderVisible && (
         <div className="loader-overlay">
           <div className="loader-box">
             <div className="spinner" />
             <p>{loaderText}</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Upload Progress Overlay ── */}
+      {jobProgress && (
+        <div className="loader-overlay">
+          <div className="progress-box">
+            <h3 className="progress-title">
+              {jobProgress.status === "failed" ? "Processing Failed" : "Processing Meeting"}
+            </h3>
+
+            {jobProgress.status !== "failed" ? (
+              <>
+                <div className="progress-bar-track">
+                  <div
+                    className="progress-bar-fill"
+                    style={{ width: `${jobProgress.progress}%` }}
+                  />
+                </div>
+                <div className="progress-info">
+                  <span className="progress-stage">
+                    {jobProgress.stage === "uploading" && "📤 Uploading File"}
+                    {jobProgress.stage === "queued" && "⏳ Queued"}
+                    {jobProgress.stage === "extracting_audio" && "🎵 Extracting Audio"}
+                    {jobProgress.stage === "transcribing" && "🎙️ Transcribing"}
+                    {jobProgress.stage === "embedding" && "🧠 Embedding"}
+                    {jobProgress.stage === "generating_highlights" && "✨ Generating Highlights"}
+                    {jobProgress.stage === "done" && "✅ Complete"}
+                  </span>
+                  <span className="progress-pct">{jobProgress.progress}%</span>
+                </div>
+                {jobProgress.detail && (
+                  <p className="progress-detail">{jobProgress.detail}</p>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="progress-error">{jobProgress.error || "An unknown error occurred."}</p>
+                <button className="btn primary" onClick={handleRetry}>
+                  Dismiss
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
