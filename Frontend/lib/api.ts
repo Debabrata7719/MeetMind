@@ -25,12 +25,40 @@ export async function getMeetings(): Promise<Meeting[]> {
   return res.json();
 }
 
-export async function uploadMeeting(file: File): Promise<UploadResponse> {
-  const fd = new FormData();
-  fd.append("file", file);
-  const res = await fetch(`${API_BASE}/upload`, { method: "POST", body: fd, ...OPTS });
-  if (!res.ok) throw new Error("Upload failed");
-  return res.json();
+export function uploadMeeting(
+  file: File,
+  onProgress?: (percent: number) => void
+): Promise<UploadResponse> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const fd = new FormData();
+    fd.append("file", file);
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) {
+        const percent = Math.round((event.loaded / event.total) * 100);
+        onProgress(percent);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText));
+        } catch {
+          reject(new Error("Invalid response"));
+        }
+      } else {
+        reject(new Error("Upload failed"));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Upload failed"));
+
+    xhr.open("POST", `${API_BASE}/upload`);
+    xhr.withCredentials = true; // Equivalent to credentials: "include"
+    xhr.send(fd);
+  });
 }
 
 export async function startRecording(): Promise<void> {
@@ -78,4 +106,20 @@ export async function setMeetingName(meetingId: string, name: string): Promise<v
 
 export function getDownloadUrl(meetingId: string, format: "pdf" | "txt" | "docx"): string {
   return `${API_BASE}/download-notes?meeting_id=${meetingId}&format=${format}`;
+}
+
+// ─── Job Progress Polling ─────────────────────────────────────────────────────
+
+export interface JobStatus {
+  status: "queued" | "processing" | "done" | "failed";
+  stage: string;
+  detail: string;
+  progress: number;
+  error: string;
+}
+
+export async function getJobStatus(meetingId: string): Promise<JobStatus> {
+  const res = await fetch(`${API_BASE}/status/${meetingId}`, OPTS);
+  if (!res.ok) throw new Error("Failed to fetch job status");
+  return res.json();
 }
