@@ -252,6 +252,7 @@ Final Cleanup       →  Original uploaded video and intermediate folder are per
       │                        (First run cached in Redis, instant retrieval after)
       │
       └──▶  chat.py        →  ConversationalRetrievalChain (k=7) + Redis-backed memory (5 turns)
+                                 → Semantic Caching via Redis (skips Groq for repeat questions)
                                  → Groq LLM → context-only answer
                                  Session key: chat:{user_id}:{meeting_id} — survives restarts
 ```
@@ -302,6 +303,8 @@ pytest tests/test_services.py -v -s -p no:warnings
 **Aggressive Auto-Deletion** — To protect CPU and storage limits, large uploads are split into 5-minute `.wav` segments. The pipeline iteratively transcribes, embeds, and deletes each chunk. Once 100% complete, the original massive video file and all intermediate text files are permanently deleted. The VectorDB acts as the sole source of truth.
 
 **Redis Highlights Caching** — Highlights are generated on-demand rather than automatically. The first click queries the LLM and caches the output in Redis. Subsequent clicks pull from Redis instantly, saving money on API tokens and drastically improving UI responsiveness.
+
+**Semantic Chat Caching** — The chat system converts user queries into mathematical embeddings using the local SentenceTransformers model, and compares them against previous queries stored in Redis using cosine similarity. If a user asks a question that is >95% similar to a previous question, the answer is instantly served from the Redis cache without ever hitting the Groq API.
 
 **Per-meeting vector stores** — each meeting gets its own ChromaDB directory under `data/vectordb/<meeting_id>/`. Meetings never pollute each other's retrieval results.
 
