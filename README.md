@@ -28,12 +28,13 @@ Upload or record a meeting (MP4 / MP3 / WAV), and the system will:
 | Backend API | FastAPI + Uvicorn |
 | API routing | Modular routers under `api/routes/` and `auth/` |
 | Database | MySQL (User accounts + Meetings) |
+| Chat memory | Redis — persistent, multi-worker safe (`RedisChatMessageHistory`) |
 | Auth | bcrypt + python-jose (JWT httpOnly cookies) |
 | Speech-to-text | faster-whisper (`small` model, CTranslate2 backend) |
 | Embeddings | `paraphrase-multilingual-MiniLM-L12-v2` (SentenceTransformers) |
 | Vector store | ChromaDB `PersistentClient` — per-meeting collections |
-| LLM | Groq (`openai/gpt-oss-120b`) |
-| LangChain | `ConversationalRetrievalChain` + `ConversationBufferWindowMemory` |
+| LLM | Groq (`llama-3.3-70b-versatile`) |
+| LangChain | `ConversationalRetrievalChain` + Redis-backed `ConversationBufferWindowMemory` |
 | Audio extraction | FFmpeg |
 | Frontend | Next.js 15 (App Router) + React |
 | Styling | Tailwind CSS v4 |
@@ -60,7 +61,7 @@ Meeting_Intelligence_System/
 │   │   └── embed_store.py          # SentenceTransformers + ChromaDB write
 │   ├── intelligence/
 │   │   ├── highlights.py           # Multi-query retrieval → Groq highlights
-│   │   └── chat.py                 # ConversationalRetrievalChain + memory
+│   │   └── chat.py                 # ConversationalRetrievalChain + Redis memory
 │   ├── recording/
 │   │   └── recorder.py             # sounddevice live microphone recording
 │   └── services.py                 # Orchestrator: pipeline → embed → chat/highlights
@@ -107,8 +108,7 @@ Meeting_Intelligence_System/
 │
 ├── data/
 │   ├── intermediate/               # transcript.txt, chunks.txt, clean_meeting_audio.wav
-│   ├── vectordb/                   # Per-meeting ChromaDB stores
-│   └── meetings.json               # Meeting name registry
+│   └── vectordb/                   # Per-meeting ChromaDB stores
 │
 ├── Notes/                          # Generated highlights (.txt / .pdf / .docx)
 │
@@ -160,7 +160,23 @@ FFmpeg must be available. Either:
 
 Create a database named `Meeting_analizer_user` and a `users` and `meetings` table. See `auth/db.py` for schema details.
 
-### 6. Environment variables
+### 6. Redis Setup
+
+Redis is required for persistent chat memory. Install and run Redis:
+
+```bash
+# Docker (recommended)
+docker run -d --name redis-server -p 6379:6379 redis
+
+# Or install natively — see https://redis.io/docs/getting-started/
+```
+
+Verify it's running:
+```bash
+python -c "import redis; r = redis.from_url('redis://localhost:6379'); r.ping(); print('OK')"
+```
+
+### 7. Environment variables
 
 Create a `.env` file in the project root:
 
@@ -175,6 +191,8 @@ DB_NAME=Meeting_analizer_user
 JWT_SECRET_KEY=your_secure_random_string
 JWT_ALGORITHM=HS256
 JWT_EXPIRE_HOURS=24
+
+REDIS_URL=redis://localhost:6379
 ```
 
 Create a `.env.local` file inside the `frontend/` folder:
@@ -187,7 +205,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 
 ## Running the app
 
-Open two terminals:
+Ensure Redis is running, then open two terminals:
 
 **Terminal 1 — Backend (FastAPI)**
 ```bash
@@ -213,31 +231,32 @@ For the full API reference see **[API.md](API.md)**.
 Upload / Record
       │
       ▼
-upload.py           →  Enforces 200MB streaming file size limit
-                       ⚠️  NOTE: Runs in threadpool but BLOCKS HTTP response until complete
+upload.py           →  Starts BackgroundTask, returns immediately. Stores progress in Redis.
       │
       ▼
 video_to_audio.py   →  FFmpeg extracts audio and splits into 5-minute chunks (chunk_000.wav)
       │
       ▼
 (Iterative Loop for each 5-minute chunk)
-       ├── audio_to_text.py  →  faster-whisper (small, task="translate") transcribes chunk → appends to final transcript.txt
-      ├── chunk_text.py     →  LangChain splits text into 150-char chunks (30 overlap)
-      ├── embed_store.py    →  SentenceTransformers encodes → ChromaDB stores (uuid4 IDs)
-      └── Cleanup           →  Deletes the 5-minute .wav and .txt chunks instantly to free memory
+       ├── audio_to_text.py  →  faster-whisper (small, task="translate") transcribes chunk
+       ├── chunk_text.py     →  LangChain splits text into 150-char chunks (30 overlap)
+       ├── embed_store.py    →  SentenceTransformers encodes → ChromaDB stores (uuid4 IDs)
+       └── Cleanup           →  Deletes the 5-minute .wav and .txt chunks instantly
       │
       ▼
-      ├──▶  highlights.py  →  5 semantic queries → deduplicate → Groq LLM → bullet points
-      │                        saved to Notes/highlights_<meeting_id>.txt
+Final Cleanup       →  Original uploaded video and intermediate folder are permanently deleted.
       │
-      └──▶  chat.py        →  ConversationalRetrievalChain (k=7) + ConversationBufferWindowMemory (5 turns)
-                                → Groq LLM → context-only answer
-                                ⚠️  NOTE: Memory is in-process, lost on server restart
+      ▼
+(On Demand via UI)
+      ├──▶  highlights.py  →  5 semantic queries → deduplicate → Groq LLM → bullet points
+      │                        (First run cached in Redis, instant retrieval after)
+      │
+      └──▶  chat.py        →  ConversationalRetrievalChain (k=7) + Redis-backed memory (5 turns)
+                                 → Groq LLM → context-only answer
+                                 Session key: chat:{user_id}:{meeting_id} — survives restarts
 ```
 
 > **Critical:** `embed_store.py`, `chat.py`, and `highlights.py` all use `paraphrase-multilingual-MiniLM-L12-v2`. Using a different model at query time vs store time silently breaks semantic search and returns garbage results.
-
-> **Important:** Upload endpoint uses `run_in_threadpool` but still blocks the HTTP response until the entire pipeline completes. For large files (>1 hour), this can cause timeouts. True async processing with job queues is on the roadmap.
 
 ---
 
@@ -278,7 +297,11 @@ pytest tests/test_services.py -v -s -p no:warnings
 
 **Separated concerns** — `app/` owns all AI and pipeline logic. `api/` owns the HTTP layer. `auth/` owns authentication. `main.py` is thin and just wires them together. This makes each layer independently testable.
 
-**Chunk-Based Processing** — to protect CPU and memory, large uploads are split into 5-minute `.wav` segments. The pipeline iteratively transcribes, embeds, and deletes each chunk before moving to the next. This prevents server crashes from loading massive files into RAM all at once.
+**Background Processing & Progress Tracking** — File uploads trigger asynchronous background tasks. The pipeline state and exact percentage are updated in Redis in real-time. The frontend smoothly polls `/status/<meeting_id>` to render a live progress bar.
+
+**Aggressive Auto-Deletion** — To protect CPU and storage limits, large uploads are split into 5-minute `.wav` segments. The pipeline iteratively transcribes, embeds, and deletes each chunk. Once 100% complete, the original massive video file and all intermediate text files are permanently deleted. The VectorDB acts as the sole source of truth.
+
+**Redis Highlights Caching** — Highlights are generated on-demand rather than automatically. The first click queries the LLM and caches the output in Redis. Subsequent clicks pull from Redis instantly, saving money on API tokens and drastically improving UI responsiveness.
 
 **Per-meeting vector stores** — each meeting gets its own ChromaDB directory under `data/vectordb/<meeting_id>/`. Meetings never pollute each other's retrieval results.
 
@@ -286,16 +309,19 @@ pytest tests/test_services.py -v -s -p no:warnings
 
 **Context-only answering** — the chat prompt instructs the LLM to answer only from retrieved context and respond with "Not found in the meeting transcript" if the answer isn't there. This prevents hallucination.
 
+**Redis-backed chat memory** — chat history is stored in Redis using `RedisChatMessageHistory`, keyed by `chat:{user_id}:{meeting_id}`. This means conversation context survives server restarts, works correctly with multiple Uvicorn workers (`--workers 4`), and ensures two users chatting with the same meeting get fully isolated memory.
+
 **Session-scoped test fixtures** — FFmpeg and Whisper run once per `pytest` session. All test files share the results via `conftest.py` fixtures, keeping total test time reasonable.
 
 **Python 3.13 compatibility** — `conftest.py` patches `importlib.util.find_spec` to handle `soundfile.__spec__ = None`, which causes `ValueError` in Python 3.13 when `transformers` checks for soundfile availability.
 
-**User authentication & meeting isolation** — JWT httpOnly cookies + bcrypt hashing ensures secure sessions. Meeting ownership is enforced on `/chat`, `/notes`, `/set-meeting-name`, and `/meetings` endpoints. All meetings are scoped to the authenticated user.
+**User authentication & meeting isolation** — JWT httpOnly cookies + bcrypt hashing ensures secure sessions. Meeting ownership is enforced on `/chat`, `/notes`, `/set-meeting-name`, `/download-notes`, and `/meetings` endpoints. All meetings are scoped to the authenticated user. Meeting names are stored exclusively in MySQL — no legacy JSON files.
 
 ---
 
 ## Future improvements
 
+- Async upload processing with job queues (Redis + Celery/ARQ)
 - Speaker diarization (who said what)
 - Live transcription streaming
 - Meeting analytics dashboard
@@ -303,6 +329,4 @@ pytest tests/test_services.py -v -s -p no:warnings
 - Action item auto-assignment
 - Multi-language highlight extraction
 - Docker containerization
-
-
-c
+- Password reset and email verification
