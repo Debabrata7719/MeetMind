@@ -32,6 +32,7 @@ data/intermediate/
 data/vectordb/
 data/meetings.json
 SCALE.md
+Fix_Scale.md
 # ─── Notes (generated highlights) ────────────────────────
 Notes/*.txt
 Notes/*.pdf
@@ -60,3 +61,12 @@ desktop.ini
 # ─── Logs ─────────────────────────────────────────────────
 *.log
 logs/
+
+# ─── Frontend (Next.js) ───────────────────────────────────
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+frontend/.turbo/
+
+# ─── Temp / scratch files ─────────────────────────────────
+API.json
