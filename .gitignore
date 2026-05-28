@@ -33,6 +33,7 @@ data/vectordb/
 data/meetings.json
 SCALE.md
 Fix_Scale.md
+DATABASE_ARCHITECTURE.md
 # ─── Notes (generated highlights) ────────────────────────
 Notes/*.txt
 Notes/*.pdf
