@@ -1,20 +1,18 @@
 """
 api/routes/recording.py
-
-POST /start-recording  — start live microphone capture.
-POST /stop-recording   — stop capture, run full pipeline, save meeting to MySQL.
-Requires authentication (httpOnly JWT cookie).
 """
 
 import traceback
 from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Depends
 from starlette.concurrency import run_in_threadpool
+from sqlalchemy.orm import Session
 
 from app.recording.recorder import start_recording, stop_recording
 from app.services import process_meeting
 from auth.dependencies import get_current_user
-from auth.db import save_meeting
+from auth.db import get_db
+from auth.service import save_meeting
 
 router = APIRouter()
 
@@ -34,7 +32,7 @@ async def start_rec(user: dict = Depends(get_current_user)):
 
 
 @router.post("/stop-recording")
-async def stop_rec(user: dict = Depends(get_current_user)):
+async def stop_rec(user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     global stream
 
     if stream is None:
@@ -47,7 +45,7 @@ async def stop_rec(user: dict = Depends(get_current_user)):
         stream = None
 
         # Save meeting to MySQL under this user
-        save_meeting(meeting_id, user["user_id"], "Live Recording")
+        save_meeting(db, meeting_id, user["user_id"], "Live Recording")
 
         return {
             "message": "Recording stopped & processed",

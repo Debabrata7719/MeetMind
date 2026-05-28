@@ -1,18 +1,18 @@
 """
 api/routes/upload.py
-
-POST /upload — accept MP4/MP3/WAV, save file, kick off pipeline in background.
-Returns immediately with meeting_id so the frontend can poll /status/{meeting_id}.
-Requires authentication (httpOnly JWT cookie).
 """
 
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks, Request
+from sqlalchemy.orm import Session
+from app.core.rate_limit import limiter
+import filetype
 
 from app.services import process_meeting
 from app.core.job_progress import set_job_queued
 from auth.dependencies import get_current_user
-from auth.db import save_meeting
+from auth.db import get_db
+from auth.service import save_meeting
 
 router = APIRouter()
 
@@ -23,10 +23,13 @@ ALLOWED_EXTENSIONS = {".mp4", ".mp3", ".wav"}
 
 
 @router.post("/upload")
+@limiter.limit("5/hour")
 async def upload(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
@@ -36,6 +39,21 @@ async def upload(
     meeting_id = uuid4().hex
     file_path = UPLOAD_DIR / f"{meeting_id}{ext}"
     original_name = Path(file.filename).stem  # use filename as initial meeting name
+
+    # 1. Early Content-Type Check
+    ALLOWED_MIME_PREFIXES = ("video/", "audio/")
+    if not file.content_type.startswith(ALLOWED_MIME_PREFIXES):
+        raise HTTPException(400, "Invalid content type in header. Must be video or audio.")
+
+    # 2. Deep Byte Sniffing Check
+    chunk = await file.read(2048)
+    kind = filetype.guess(chunk)
+    
+    if kind is None or not kind.mime.startswith(ALLOWED_MIME_PREFIXES):
+        raise HTTPException(400, "Invalid file signature. File is not a valid video or audio format.")
+        
+    # Reset cursor so the entire file can be written to disk
+    await file.seek(0)
 
     try:
         total_size = 0
@@ -51,7 +69,7 @@ async def upload(
                 f.write(chunk)
 
         # Save meeting to MySQL immediately so it appears in history
-        save_meeting(meeting_id, user["user_id"], original_name)
+        save_meeting(db, meeting_id, user["user_id"], original_name)
 
         # Initialize job status in Redis as "queued"
         set_job_queued(meeting_id)

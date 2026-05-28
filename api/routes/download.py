@@ -8,13 +8,16 @@ import os
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
+import redis
 
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from docx import Document
 
 from auth.dependencies import get_current_user
-from auth.db import get_meeting_name
+from auth.db import get_db
+from auth.service import get_meeting_name
 
 router = APIRouter()
 
@@ -23,11 +26,12 @@ router = APIRouter()
 def download_notes(
     meeting_id: str,
     format: str = "pdf",
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
 
     # ── resolve meeting name and verify ownership ─────────
-    meeting_name = get_meeting_name(meeting_id, user["user_id"])
+    meeting_name = get_meeting_name(db, meeting_id, user["user_id"])
     if not meeting_name:
         raise HTTPException(status_code=403, detail="Meeting not found or access denied")
 
@@ -36,13 +40,16 @@ def download_notes(
     ).strip()
 
     download_time = datetime.now().strftime("%d %b %Y, %I:%M %p")
-    txt_path = f"Notes/highlights_{meeting_id}.txt"
+    
+    # ── fetch text from Redis ─────────────────────────────
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
+    text = redis_client.get(f"highlights:{meeting_id}")
 
-    if not os.path.exists(txt_path):
+    if not text:
         return {"error": "Highlights not generated yet."}
-
-    with open(txt_path, "r", encoding="utf-8") as f:
-        text = f.read()
+        
+    os.makedirs("Notes", exist_ok=True)
 
     # ── PDF ───────────────────────────────────────────────
     if format == "pdf":
