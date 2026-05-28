@@ -31,6 +31,7 @@ Upload or record a meeting (MP4 / MP3 / WAV), and the system will:
 | Chat memory | Redis — persistent, multi-worker safe (`RedisChatMessageHistory`) |
 | Rate limiting | `slowapi` + Redis — per-email limits on upload, chat, notes, login |
 | Auth | bcrypt + python-jose (JWT httpOnly cookies, cross-domain aware) |
+| Email (OTP) | Gmail SMTP via `smtplib` — App Password authentication |
 | Speech-to-text | faster-whisper (`small` model, CTranslate2 backend) |
 | Embeddings | `paraphrase-multilingual-MiniLM-L12-v2` (Singleton — loaded once per process) |
 | Vector store | ChromaDB `PersistentClient` — per-meeting collections |
@@ -85,15 +86,19 @@ Meeting_Intelligence_System/
 │   ├── security.py                 # bcrypt hashes, password rules, JWT signing
 │   ├── models.py                   # SQLAlchemy ORM models (User, Meeting)
 │   ├── schemas.py                  # Pydantic request/response schemas
-│   ├── service.py                  # DB service functions (create_user, save_meeting, etc.)
-│   ├── router.py                   # POST /register, /login, /logout, GET /me
+│   ├── service.py                  # DB service functions (create_user, save_meeting, update_password etc.)
+│   ├── email_service.py            # Gmail SMTP — sends OTP emails for password reset
+│   ├── router.py                   # POST /register, /login, /logout, /forgot-password, /verify-otp, /reset-password, GET /me
 │   └── dependencies.py             # JWT httpOnly cookie decoder
 │
 ├── frontend/                       # Next.js Application
 │   ├── app/
 │   │   ├── page.tsx                # Animated Landing Page
-│   │   ├── login/                  # Sign in
+│   │   ├── login/                  # Sign in + Forgot Password link
 │   │   ├── register/               # Sign up
+│   │   ├── forgot-password/        # Step 1: Email input → sends OTP
+│   │   ├── verify-otp/             # Step 2: Enter 4-digit OTP (with resend)
+│   │   ├── reset-password/         # Step 3: New password (only after OTP verified)
 │   │   └── dashboard/              # Protected meeting interface
 │   ├── components/                 # Reusable React components
 │   ├── lib/
@@ -168,7 +173,19 @@ FFmpeg must be available. Either:
 
 ### 5. MySQL Setup
 
-Create a database named `Meeting_analizer_user` and a `users` and `meetings` table. See `auth/db.py` for schema details.
+1. Create the empty database in MySQL:
+
+```sql
+CREATE DATABASE Meeting_analizer_user;
+```
+
+2. Add your database credentials to `.env` (see Step 7 below), then run Alembic to automatically create all tables:
+
+```bash
+alembic upgrade head
+```
+
+This creates the `users` and `meetings` tables with the correct schema. Re-run this command whenever new migrations are added.
 
 ### 6. Redis Setup
 
@@ -209,6 +226,12 @@ CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 
 # Set to 'production' to: disable /docs, enable SameSite=none cookies, enforce JWT key check
 ENV=development
+
+# ─── Gmail OTP Email Service (Forgot Password) ──────────────────
+# Use your Gmail address and a Gmail App Password (NOT your real password)
+# To get an App Password: Google Account → Security → 2-Step Verification → App Passwords
+EMAIL_ADDRESS=your_gmail_address@gmail.com
+EMAIL_APP_PASSWORD=your_16_char_app_password
 ```
 
 > **Note:** The server performs a strict health check on startup. If `GROQ_API_KEY` is missing, MySQL is unreachable, or Redis is offline, the server will crash immediately with a descriptive error rather than silently failing mid-upload.
@@ -346,6 +369,8 @@ pytest tests/test_services.py -v -s -p no:warnings
 
 **Session-scoped test fixtures** — FFmpeg and Whisper run once per `pytest` session. All test files share the results via `conftest.py` fixtures, keeping total test time reasonable.
 
+**OTP-Based Password Reset** — Forgot Password uses a secure 3-step flow: (1) backend verifies the email exists in MySQL, (2) generates a cryptographically random 4-digit OTP using `random.randint`, stores it in Redis with a strict 5-minute TTL, and sends it via Gmail SMTP App Password. (3) After the user enters the correct OTP, a `otp_verified:{email}` flag is written to Redis. The `/reset-password` endpoint checks for this flag before allowing a password change, preventing anyone from bypassing the OTP step.
+
 **User authentication & meeting isolation** — JWT httpOnly cookies + bcrypt hashing ensures secure sessions. Meeting ownership is enforced on `/chat`, `/notes`, `/set-meeting-name`, `/download-notes`, and `/meetings` endpoints. All meetings are scoped to the authenticated user. Meeting names are stored exclusively in MySQL — no legacy JSON files.
 
 ---
@@ -360,7 +385,6 @@ pytest tests/test_services.py -v -s -p no:warnings
 - Action item auto-assignment
 - Multi-language highlight extraction
 - Docker containerization (`api`, `worker`, `frontend`, `redis`, `mysql`)
-- Password reset and email verification
 - Email notification when long processing jobs complete
 - Pagination for the meetings list (`?page=&limit=`)
 - CI/CD pipeline (GitHub Actions — pytest + frontend build on every PR)

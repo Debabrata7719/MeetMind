@@ -77,3 +77,15 @@ def delete_meeting_from_db(db: Session, meeting_id: str, user_id: int) -> bool:
         db.commit()
         return True
     return False
+
+
+def update_password(db: Session, email: str, new_plain_password: str) -> bool:
+    """Hash and store the new password for the given email address."""
+    from auth.security import hash_password
+    stmt = select(User).where(User.email == email)
+    user = db.execute(stmt).scalar_one_or_none()
+    if not user:
+        return False
+    user.password = hash_password(new_plain_password)
+    db.commit()
+    return True
