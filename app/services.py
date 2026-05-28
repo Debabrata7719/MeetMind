@@ -75,3 +75,65 @@ def generate_notes(meeting_id: str):
 
 def ask_question(query: str, meeting_id: str, user_id: int):
     return chat_ask(query, meeting_id, user_id)
+
+
+def delete_meeting_data(meeting_id: str, user_id: int):
+    import shutil
+    import glob
+    import redis
+    import os
+    
+    # 1. Delete ChromaDB folder
+    vectordb_dir = os.path.join("data", "vectordb", meeting_id)
+    if os.path.exists(vectordb_dir):
+        try:
+            from langchain_community.vectorstores import Chroma
+            from app.intelligence.embeddings import shared_embedding_model
+            vector_db = Chroma(
+                persist_directory=vectordb_dir,
+                embedding_function=shared_embedding_model
+            )
+            vector_db.delete_collection()
+            # Try to force garbage collection of the SQLite connection
+            del vector_db
+            
+            # Clear Chroma system cache to release the Windows file lock on sqlite3
+            import chromadb
+            chromadb.api.client.SharedSystemClient.clear_system_cache()
+        except Exception as e:
+            print(f"[Warning] Failed to delete Chroma collection via API: {e}")
+            
+        shutil.rmtree(vectordb_dir, ignore_errors=True)
+        
+        # Fallback for Windows file locks: Truncate the locked sqlite files to 0 bytes
+        if os.path.exists(vectordb_dir):
+            for root, _, files in os.walk(vectordb_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    try:
+                        with open(file_path, 'w') as f:
+                            f.write('')
+                    except Exception:
+                        pass
+    
+    # 2. Delete Redis keys
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    try:
+        redis_client = redis.from_url(redis_url)
+        redis_client.delete(f"highlights:{meeting_id}")
+        redis_client.delete(f"semantic_cache:{user_id}:{meeting_id}")
+        redis_client.delete(f"message_store:chat:{user_id}:{meeting_id}")
+        redis_client.delete(f"chat:{user_id}:{meeting_id}")
+    except Exception as e:
+        print(f"[Warning] Failed to delete Redis keys for {meeting_id}: {e}")
+    
+    # 3. Clean up intermediate and upload files just in case
+    for folder in ["uploads", "intermediate"]:
+        for f in glob.glob(os.path.join("data", folder, f"{meeting_id}*")):
+            try:
+                if os.path.isfile(f):
+                    os.remove(f)
+                elif os.path.isdir(f):
+                    shutil.rmtree(f, ignore_errors=True)
+            except:
+                pass

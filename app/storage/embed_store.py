@@ -1,10 +1,6 @@
 import os
 import chromadb
-from sentence_transformers import SentenceTransformer
-
-
-model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
-
+from app.intelligence.embeddings import shared_embedding_model
 
 def embed_store(chunks_file: str, meeting_id: str):
     """
@@ -34,7 +30,7 @@ def embed_store(chunks_file: str, meeting_id: str):
 
     print(f"[OK] Loaded {len(chunks)} chunks")
 
-    embeddings = model.encode(chunks).tolist()
+    embeddings = shared_embedding_model.embed_documents(chunks)
 
     os.makedirs(persist_directory, exist_ok=True)
 

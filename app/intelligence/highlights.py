@@ -1,5 +1,4 @@
 from langchain_chroma import Chroma
-from langchain_community.embeddings import SentenceTransformerEmbeddings
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 import os
@@ -19,11 +18,7 @@ def extract_highlights(meeting_id: str):
 
     print("[INFO] Extracting meeting highlights from VectorDB...")
 
-    # ========= Embedding =========
-    # MUST match the model used in embed_store.py
-    embedding = SentenceTransformerEmbeddings(
-        model_name="paraphrase-multilingual-MiniLM-L12-v2"
-    )
+    from app.intelligence.embeddings import shared_embedding_model as embedding
 
     # ========= LOAD MEETING-SPECIFIC DB =========
     db_path = os.path.join("data", "vectordb", meeting_id)

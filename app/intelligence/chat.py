@@ -13,7 +13,6 @@ load_dotenv()
 # ===============================
 from langchain_groq import ChatGroq
 from langchain_chroma import Chroma
-from langchain_community.embeddings import SentenceTransformerEmbeddings
 from langchain_community.chat_message_histories import RedisChatMessageHistory
 
 from langchain_classic.chains import ConversationalRetrievalChain
@@ -35,9 +34,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 # EMBEDDING (load once → faster)
 # MUST match the model used in embed_store.py
 # ===============================
-embedding = SentenceTransformerEmbeddings(
-    model_name="paraphrase-multilingual-MiniLM-L12-v2"
-)
+from app.intelligence.embeddings import shared_embedding_model as embedding
 
 
 # ===============================
