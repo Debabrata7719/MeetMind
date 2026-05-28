@@ -8,20 +8,23 @@ Auth endpoints:
   GET  /auth/me        — return current user from cookie (session check)
 """
 
+import os
 import traceback
-from fastapi import APIRouter, HTTPException, Response, Request
-from mysql.connector import IntegrityError
+from fastapi import APIRouter, HTTPException, Response, Request, Depends
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
-from auth.db import get_connection
+from auth.db import get_db
+from auth.service import create_user, get_user_by_email
 from auth.security import (
     validate_password,
-    hash_password,
     verify_password,
     create_access_token,
     decode_access_token,
     EXPIRE_HOURS,
 )
-from auth.models import RegisterRequest, LoginRequest, UserResponse
+from auth.schemas import RegisterRequest, LoginRequest, UserResponse
+from app.core.rate_limit import limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -32,7 +35,8 @@ COOKIE_MAX_AGE = EXPIRE_HOURS * 3600  # seconds
 # ─── Register ──────────────────────────────────────────────────────────────────
 
 @router.post("/register", status_code=201)
-def register(payload: RegisterRequest):
+@limiter.limit("3/minute")
+def register(request: Request, payload: RegisterRequest, db: Session = Depends(get_db)):
     # 1. Confirm passwords match
     if payload.password != payload.confirm_password:
         raise HTTPException(400, "Passwords do not match")
@@ -42,19 +46,9 @@ def register(payload: RegisterRequest):
     if errors:
         raise HTTPException(400, {"detail": "Weak password", "rules": errors})
 
-    # 3. Hash & insert
-    hashed = hash_password(payload.password)
-
+    # 3. Create user
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO users (email, password) VALUES (%s, %s)",
-            (payload.email, hashed),
-        )
-        conn.commit()
-        cursor.close()
-        conn.close()
+        create_user(db, payload.email, payload.password)
     except IntegrityError:
         raise HTTPException(409, "Email already registered")
     except Exception:
@@ -67,52 +61,49 @@ def register(payload: RegisterRequest):
 # ─── Login ─────────────────────────────────────────────────────────────────────
 
 @router.post("/login")
-def login(payload: LoginRequest, response: Response):
+@limiter.limit("5/minute")
+def login(request: Request, payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
     # 1. Fetch user
     try:
-        conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute(
-            "SELECT id, email, password FROM users WHERE email = %s",
-            (payload.email,),
-        )
-        user = cursor.fetchone()
-        cursor.close()
-        conn.close()
+        user = get_user_by_email(db, payload.email)
     except Exception:
         traceback.print_exc()
         raise HTTPException(500, "Login failed")
 
     # 2. Verify credentials (same message for both to prevent enumeration)
-    if not user or not verify_password(payload.password, user["password"]):
+    if not user or not verify_password(payload.password, user.password):
         raise HTTPException(401, "Invalid email or password")
 
     # 3. Issue JWT and set httpOnly cookie
-    token = create_access_token(user["id"], user["email"])
+    token = create_access_token(user.id, user.email)
+
+    is_prod = os.getenv("ENV") == "production"
 
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         httponly=True,
-        samesite="lax",
-        secure=False,          # set True in production (HTTPS)
+        samesite="none" if is_prod else "lax",
+        secure=is_prod,
         max_age=COOKIE_MAX_AGE,
         path="/",
     )
 
-    return {"message": "Logged in", "email": user["email"]}
+    return {"message": "Logged in", "email": user.email}
 
 
 # ─── Logout ────────────────────────────────────────────────────────────────────
 
 @router.post("/logout")
 def logout(response: Response):
+    is_prod = os.getenv("ENV") == "production"
+
     response.delete_cookie(
         key=COOKIE_NAME, 
         path="/",
         httponly=True,
-        samesite="lax",
-        secure=False
+        samesite="none" if is_prod else "lax",
+        secure=is_prod
     )
     return {"message": "Logged out"}
 
