@@ -27,15 +27,17 @@ Upload or record a meeting (MP4 / MP3 / WAV), and the system will:
 |---|---|
 | Backend API | FastAPI + Uvicorn |
 | API routing | Modular routers under `api/routes/` and `auth/` |
-| Database | MySQL (User accounts + Meetings) |
+| Database | MySQL (User accounts + Meetings) via SQLAlchemy 2.0 ORM + Alembic |
 | Chat memory | Redis — persistent, multi-worker safe (`RedisChatMessageHistory`) |
-| Auth | bcrypt + python-jose (JWT httpOnly cookies) |
+| Rate limiting | `slowapi` + Redis — per-email limits on upload, chat, notes, login |
+| Auth | bcrypt + python-jose (JWT httpOnly cookies, cross-domain aware) |
 | Speech-to-text | faster-whisper (`small` model, CTranslate2 backend) |
-| Embeddings | `paraphrase-multilingual-MiniLM-L12-v2` (SentenceTransformers) |
+| Embeddings | `paraphrase-multilingual-MiniLM-L12-v2` (Singleton — loaded once per process) |
 | Vector store | ChromaDB `PersistentClient` — per-meeting collections |
 | LLM | Groq (`llama-3.3-70b-versatile`) |
 | LangChain | `ConversationalRetrievalChain` + Redis-backed `ConversationBufferWindowMemory` |
 | Audio extraction | FFmpeg |
+| File validation | `filetype` — deep MIME-type byte sniffing on every upload |
 | Frontend | Next.js 15 (App Router) + React |
 | Styling | Tailwind CSS v4 |
 | Export | ReportLab (PDF), python-docx (DOCX) |
@@ -51,7 +53,9 @@ Meeting_Intelligence_System/
 │
 ├── app/                            # Core business logic
 │   ├── core/
-│   │   └── config.py               # Central paths + FFmpeg auto-discovery
+│   │   ├── config.py               # Central paths + FFmpeg auto-discovery
+│   │   ├── rate_limit.py           # slowapi Limiter (Redis backend, email-based key)
+│   │   └── job_progress.py         # Redis-backed pipeline progress tracking
 │   ├── pipeline/
 │   │   ├── video_to_audio.py       # FFmpeg: MP4/MP3 → 16kHz mono WAV
 │   │   ├── audio_to_text.py        # faster-whisper: WAV → transcript.txt
@@ -60,6 +64,7 @@ Meeting_Intelligence_System/
 │   ├── storage/
 │   │   └── embed_store.py          # SentenceTransformers + ChromaDB write
 │   ├── intelligence/
+│   │   ├── embeddings.py           # Singleton embedding model (loaded once per process)
 │   │   ├── highlights.py           # Multi-query retrieval → Groq highlights
 │   │   └── chat.py                 # ConversationalRetrievalChain + Redis memory
 │   ├── recording/
@@ -70,15 +75,17 @@ Meeting_Intelligence_System/
 │   ├── models.py                   # Pydantic request models
 │   ├── router.py                   # Registers all route modules
 │   └── routes/
-│       ├── upload.py               # POST /upload
+│       ├── upload.py               # POST /upload (with MIME-type validation + rate limit)
 │       ├── recording.py            # POST /start-recording, /stop-recording
-│       ├── meeting.py              # POST /notes, /chat, /set-meeting-name, GET /meetings
+│       ├── meeting.py              # POST /notes, /chat, GET /meetings, DELETE /meetings/{id}
 │       └── download.py             # GET /download-notes
 │
 ├── auth/                           # Authentication layer
-│   ├── db.py                       # MySQL connection + meeting queries
+│   ├── db.py                       # SQLAlchemy engine + SessionLocal + meeting queries
 │   ├── security.py                 # bcrypt hashes, password rules, JWT signing
-│   ├── models.py                   # Pydantic auth models
+│   ├── models.py                   # SQLAlchemy ORM models (User, Meeting)
+│   ├── schemas.py                  # Pydantic request/response schemas
+│   ├── service.py                  # DB service functions (create_user, save_meeting, etc.)
 │   ├── router.py                   # POST /register, /login, /logout, GET /me
 │   └── dependencies.py             # JWT httpOnly cookie decoder
 │
@@ -114,11 +121,14 @@ Meeting_Intelligence_System/
 │
 ├── uploads/                        # Uploaded / recorded meeting files
 ├── assets/                         # Screenshots
-├── main.py                         # FastAPI entry point (thin — wires api/router.py)
-├── API.md                          # Full API reference
+├── main.py                         # FastAPI entry point + startup health checks + ghost sweeper
+├── API.md                          # Full offline API reference
+├── alembic.ini                     # Alembic migration config
+├── alembic/                        # Database migration scripts
 ├── requirements.txt
 ├── .gitignore
-└── .env                            # GROQ_API_KEY (not committed)
+├── .env                            # Environment variables (not committed)
+└── .env.example                    # Template for required environment variables
 ```
 
 ---
@@ -188,12 +198,20 @@ DB_USER=root
 DB_PASSWORD=your_mysql_password
 DB_NAME=Meeting_analizer_user
 
-JWT_SECRET_KEY=your_secure_random_string
+JWT_SECRET_KEY=your_secure_random_string   # Must NOT be 'changeme' in production
 JWT_ALGORITHM=HS256
 JWT_EXPIRE_HOURS=24
 
 REDIS_URL=redis://localhost:6379
+
+# Comma-separated list of allowed frontend origins (no wildcards with credentials)
+CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+
+# Set to 'production' to: disable /docs, enable SameSite=none cookies, enforce JWT key check
+ENV=development
 ```
+
+> **Note:** The server performs a strict health check on startup. If `GROQ_API_KEY` is missing, MySQL is unreachable, or Redis is offline, the server will crash immediately with a descriptive error rather than silently failing mid-upload.
 
 Create a `.env.local` file inside the `frontend/` folder:
 
@@ -302,21 +320,31 @@ pytest tests/test_services.py -v -s -p no:warnings
 
 **Aggressive Auto-Deletion** — To protect CPU and storage limits, large uploads are split into 5-minute `.wav` segments. The pipeline iteratively transcribes, embeds, and deletes each chunk. Once 100% complete, the original massive video file and all intermediate text files are permanently deleted. The VectorDB acts as the sole source of truth.
 
+**Startup Health Checks (Fail Fast)** — On every boot, `main.py` verifies that `GROQ_API_KEY` is set, `JWT_SECRET_KEY` is not the default `changeme` value in production, MySQL responds to `SELECT 1`, and Redis responds to `PING`. If any check fails, the server refuses to start with a descriptive `FATAL:` error, preventing silent mid-request failures.
+
+**Redis Rate Limiting by Email** — All expensive endpoints are protected by `slowapi` with a shared Redis storage backend. Rate limits are enforced per authenticated user **email address** (decoded from the JWT cookie) — not by IP address — preventing shared-WiFi false positives. Unauthenticated routes like `/login` fall back to IP-based limiting.
+
+**Secure Meeting Deletion** — `DELETE /meetings/{id}` cascades across all four data systems: drops the MySQL row, removes the ChromaDB vector collection (clearing AI memory), purges all Redis chat history and cached highlights, and sweeps all raw files from the filesystem. A startup sweeper also auto-removes ghost folders left by Windows file locks on every server reboot.
+
+**Deep MIME-Type Upload Validation** — The `/upload` route uses the `filetype` library to read the first 2KB of the file stream and mathematically verify the file's internal byte signature before saving anything to disk. A file renamed from `.exe` to `.mp4` will be instantly rejected with a `400 Bad Request` without ever reaching FFmpeg.
+
+**Production Security Gate** — When `ENV=production` is set, the server automatically disables the Swagger UI (`/docs`) and OpenAPI schema (`/openapi.json`) routes, and switches auth cookies to `SameSite=none` + `Secure=True` to support cross-domain deployments (e.g., Vercel frontend + VPS backend). An offline `API.md` is included in the repository for developer reference.
+
 **Redis Highlights Caching** — Highlights are generated on-demand rather than automatically. The first click queries the LLM and caches the output in Redis. Subsequent clicks pull from Redis instantly, saving money on API tokens and drastically improving UI responsiveness.
 
 **Semantic Chat Caching** — The chat system converts user queries into mathematical embeddings using the local SentenceTransformers model, and compares them against previous queries stored in Redis using cosine similarity. If a user asks a question that is >95% similar to a previous question, the answer is instantly served from the Redis cache without ever hitting the Groq API.
 
-**Per-meeting vector stores** — each meeting gets its own ChromaDB directory under `data/vectordb/<meeting_id>/`. Meetings never pollute each other's retrieval results.
+**Embedding Model Singleton** — `paraphrase-multilingual-MiniLM-L12-v2` is instantiated exactly once per process in `app/intelligence/embeddings.py` and shared across `embed_store.py`, `chat.py`, and `highlights.py`. This prevents each Uvicorn worker from independently loading a 500MB+ model into RAM.
 
-**Embedding model consistency** — `paraphrase-multilingual-MiniLM-L12-v2` is used at both write time (`embed_store.py`) and read time (`chat.py` / `highlights.py`). This was a real bug that was found and fixed — using `all-MiniLM-L6-v2` at read time caused completely wrong retrieval results.
+**Per-meeting vector stores** — each meeting gets its own ChromaDB directory under `data/vectordb/<meeting_id>/`. Meetings never pollute each other's retrieval results.
 
 **Context-only answering** — the chat prompt instructs the LLM to answer only from retrieved context and respond with "Not found in the meeting transcript" if the answer isn't there. This prevents hallucination.
 
 **Redis-backed chat memory** — chat history is stored in Redis using `RedisChatMessageHistory`, keyed by `chat:{user_id}:{meeting_id}`. This means conversation context survives server restarts, works correctly with multiple Uvicorn workers (`--workers 4`), and ensures two users chatting with the same meeting get fully isolated memory.
 
-**Session-scoped test fixtures** — FFmpeg and Whisper run once per `pytest` session. All test files share the results via `conftest.py` fixtures, keeping total test time reasonable.
+**SQLAlchemy 2.0 ORM + Alembic** — All database interactions use SQLAlchemy ORM models and a connection-pooled `SessionLocal`. Schema changes are managed via Alembic migrations, allowing safe, version-controlled database evolution.
 
-**Python 3.13 compatibility** — `conftest.py` patches `importlib.util.find_spec` to handle `soundfile.__spec__ = None`, which causes `ValueError` in Python 3.13 when `transformers` checks for soundfile availability.
+**Session-scoped test fixtures** — FFmpeg and Whisper run once per `pytest` session. All test files share the results via `conftest.py` fixtures, keeping total test time reasonable.
 
 **User authentication & meeting isolation** — JWT httpOnly cookies + bcrypt hashing ensures secure sessions. Meeting ownership is enforced on `/chat`, `/notes`, `/set-meeting-name`, `/download-notes`, and `/meetings` endpoints. All meetings are scoped to the authenticated user. Meeting names are stored exclusively in MySQL — no legacy JSON files.
 
@@ -324,12 +352,16 @@ pytest tests/test_services.py -v -s -p no:warnings
 
 ## Future improvements
 
-- Async upload processing with job queues (Redis + Celery/ARQ)
+- Background job queue (Celery / ARQ / Redis Queue) to decouple uploads from API workers
 - Speaker diarization (who said what)
-- Live transcription streaming
+- Live transcription streaming via WebSocket/SSE
 - Meeting analytics dashboard
 - Sentiment analysis per speaker
 - Action item auto-assignment
 - Multi-language highlight extraction
-- Docker containerization
+- Docker containerization (`api`, `worker`, `frontend`, `redis`, `mysql`)
 - Password reset and email verification
+- Email notification when long processing jobs complete
+- Pagination for the meetings list (`?page=&limit=`)
+- CI/CD pipeline (GitHub Actions — pytest + frontend build on every PR)
+- Load testing before production launch
