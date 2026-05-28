@@ -11,6 +11,7 @@ import React, {
 } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { MoreVertical, Trash2 } from "lucide-react";
 import {
   getMeetings,
   uploadMeeting,
@@ -21,6 +22,7 @@ import {
   setMeetingName,
   getDownloadUrl,
   getJobStatus,
+  deleteMeeting,
   type Meeting,
   type JobStatus,
 } from "@/lib/api";
@@ -48,6 +50,7 @@ export default function DashboardPage() {
   const [currentMeetingId, setCurrentMeetingId] = useState<string | null>(null);
   const [currentMeetingName, setCurrentMeetingName] = useState<string>("");
   const [meetingReady, setMeetingReady] = useState(false);
+  const [activeDeleteMenu, setActiveDeleteMenu] = useState<string | null>(null);
 
   // Upload
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -280,10 +283,27 @@ export default function DashboardPage() {
 
   // ── Retry failed job ──
   const handleRetry = () => {
-    if (!processingMeetingId) return;
     setJobProgress(null);
     setProcessingMeetingId(null);
     // User can re-upload or select another file
+  };
+
+  // ── Delete ──
+  const handleDeleteMeeting = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await deleteMeeting(id);
+      setMeetings((prev) => prev.filter((m) => m.id !== id));
+      if (currentMeetingId === id) {
+        setCurrentMeetingId(null);
+        setMeetingReady(false);
+        setNotesLines([]);
+        setChatMessages([]);
+      }
+      setActiveDeleteMenu(null);
+    } catch (err) {
+      alert("Failed to delete meeting.");
+    }
   };
 
   // ── Notes ──
@@ -351,6 +371,8 @@ export default function DashboardPage() {
   };
 
   // ── Render ──
+  if (!currentUser) return null;
+
   return (
     <div className="dashboard-body">
 
@@ -505,9 +527,45 @@ export default function DashboardPage() {
                   className={`history-item ${
                     m.id === currentMeetingId ? "active" : ""
                   }`}
-                  onClick={() => activateMeeting(m.id, m.name)}
+                  style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                  onClick={() => {
+                    setActiveDeleteMenu(null);
+                    activateMeeting(m.id, m.name);
+                  }}
                 >
-                  {m.name}
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginRight: "8px" }}>{m.name}</span>
+                  
+                  {activeDeleteMenu === m.id ? (
+                    <button 
+                      onClick={(e) => handleDeleteMeeting(m.id, e)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        color: "#ef4444",
+                        background: "#fee2e2",
+                        border: "none",
+                        padding: "4px 8px",
+                        cursor: "pointer",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        borderRadius: "4px",
+                        flexShrink: 0
+                      }}
+                    >
+                      <Trash2 size={12} /> Delete
+                    </button>
+                  ) : (
+                    <div 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveDeleteMenu(m.id);
+                      }}
+                      style={{ padding: "2px", cursor: "pointer", opacity: 0.6, flexShrink: 0 }}
+                    >
+                      <MoreVertical size={16} />
+                    </div>
+                  )}
                 </div>
               ))
             )}

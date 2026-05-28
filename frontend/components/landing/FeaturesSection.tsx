@@ -102,9 +102,6 @@ export function FeaturesSection() {
             <Link href="/register" style={{ background:"linear-gradient(135deg,#3b82f6,#8b5cf6)", color:"#fff", fontWeight:700, fontSize:15, padding:"14px 32px", borderRadius:999, textDecoration:"none", boxShadow:"0 8px 28px rgba(59,130,246,.3)", display:"inline-flex", alignItems:"center", gap:6 }}>
               Get Started →
             </Link>
-            <a href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer" style={{ color:"rgba(255,255,255,.65)", fontWeight:600, fontSize:15, padding:"14px 32px", borderRadius:999, textDecoration:"none", border:"1px solid rgba(255,255,255,.18)", display:"inline-flex", alignItems:"center" }}>
-              View API Docs
-            </a>
           </div>
         </div>
         <div style={{ maxWidth:1152, margin:"64px auto 0", borderTop:"1px solid rgba(255,255,255,.06)", paddingTop:24, textAlign:"center", fontSize:12, color:"rgba(255,255,255,.18)" }}>

@@ -28,6 +28,7 @@ export async function apiLogin(email: string, password: string) {
     body: JSON.stringify({ email, password }),
   });
   const data = await res.json();
+  if (res.status === 429) throw { detail: "Too many requests! Please wait a moment." };
   if (!res.ok) throw data;
   return data;
 }

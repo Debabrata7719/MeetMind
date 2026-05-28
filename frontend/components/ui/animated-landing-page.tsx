@@ -11,7 +11,6 @@ export function MISHeroAnimated() {
     { label: "Features", href: "#features" },
     { label: "How It Works", href: "#how-it-works" },
     { label: "Dashboard", href: "/dashboard" },
-    { label: "API Docs", href: "http://127.0.0.1:8000/docs" },
   ];
 
   return (

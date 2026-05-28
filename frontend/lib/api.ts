@@ -48,6 +48,8 @@ export function uploadMeeting(
         } catch {
           reject(new Error("Invalid response"));
         }
+      } else if (xhr.status === 429) {
+        reject(new Error("Too many requests! Please wait a moment."));
       } else {
         reject(new Error("Upload failed"));
       }
@@ -79,6 +81,7 @@ export async function generateNotes(meetingId: string): Promise<NotesResponse> {
     body: JSON.stringify({ meeting_id: meetingId }),
     ...OPTS,
   });
+  if (res.status === 429) throw new Error("Too many requests! Please wait a moment.");
   if (!res.ok) throw new Error("Failed to generate notes");
   return res.json();
 }
@@ -90,6 +93,7 @@ export async function askQuestion(question: string, meetingId: string): Promise<
     body: JSON.stringify({ question, meeting_id: meetingId }),
     ...OPTS,
   });
+  if (res.status === 429) throw new Error("Too many requests! Please wait a moment.");
   if (!res.ok) throw new Error("Chat request failed");
   return res.json();
 }
@@ -106,6 +110,14 @@ export async function setMeetingName(meetingId: string, name: string): Promise<v
 
 export function getDownloadUrl(meetingId: string, format: "pdf" | "txt" | "docx"): string {
   return `${API_BASE}/download-notes?meeting_id=${meetingId}&format=${format}`;
+}
+
+export async function deleteMeeting(meetingId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/meetings/${meetingId}`, {
+    method: "DELETE",
+    ...OPTS,
+  });
+  if (!res.ok) throw new Error("Failed to delete meeting");
 }
 
 // ─── Job Progress Polling ─────────────────────────────────────────────────────
