@@ -1,0 +1,81 @@
+# ── Web framework ─────────────────────────────
+fastapi
+uvicorn[standard]
+python-multipart
+starlette
+
+# ── Auth & Security ───────────────────────────
+bcrypt
+python-jose[cryptography]
+passlib[bcrypt]
+cryptography
+
+# ── Database ──────────────────────────────────
+SQLAlchemy
+alembic
+mysql-connector-python
+PyMySQL
+
+# ── Redis ─────────────────────────────────────
+redis
+rq
+
+# ── Rate limiting ─────────────────────────────
+slowapi
+
+# ── LangChain ─────────────────────────────────
+langchain
+langchain-core
+langchain-chroma
+langchain-community
+langchain-groq
+langchain-text-splitters
+langchain-huggingface
+langgraph
+langsmith
+
+# ── LLM client ────────────────────────────────
+groq
+
+# ── Speech-to-text ────────────────────────────
+faster-whisper
+ctranslate2
+huggingface_hub
+
+# ── Embeddings ────────────────────────────────
+sentence-transformers
+onnxruntime
+
+# ── Vector store ──────────────────────────────
+chromadb
+
+# ── File handling & export ────────────────────
+python-docx
+reportlab
+filetype
+pillow
+ffmpeg-python
+
+# ── HTTP / async ──────────────────────────────
+httpx
+aiohttp
+anyio
+
+# ── Data / config ─────────────────────────────
+pydantic
+pydantic-settings
+python-dotenv
+PyYAML
+orjson
+numpy
+tiktoken
+tenacity
+tqdm
+regex
+
+# ── Misc ──────────────────────────────────────
+requests
+click
+python-dateutil
+email-validator
+Jinja2

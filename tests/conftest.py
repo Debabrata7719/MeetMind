@@ -119,3 +119,46 @@ def real_transcript_text(real_transcript_path):
 @pytest.fixture(scope="session")
 def real_chunks_content(real_chunks_path):
     return Path(real_chunks_path).read_text(encoding="utf-8")
+
+
+def pytest_collection_modifyitems(session, config, items):
+    """
+    Ensure tests are run step-by-step according to the pipeline flow:
+    1. Video to Audio extraction
+    2. Audio to Text transcription
+    3. Text chunking
+    4. Embedding storage
+    5. Highlights generation
+    6. Chat Q&A
+    7. Services layer E2E
+    8. Upload security checks
+    9. Cryptography/JWT security boundaries
+    10. User registration/login authentication routes
+    11. Meetings management CRUD APIs
+    12. General FastAPI route endpoints
+    """
+    order = [
+        "test_video_to_audio.py",
+        "test_audio_to_text.py",
+        "test_chunk_text.py",
+        "test_embed_store.py",
+        "test_highlights.py",
+        "test_chat.py",
+        "test_services.py",
+        "test_upload_security.py",
+        "test_security.py",
+        "test_auth.py",
+        "test_meetings_api.py",
+        "test_api.py",
+    ]
+
+    def get_index(item):
+        # Extract filename from nodeid (e.g. 'tests/test_api.py::test_root_returns_200')
+        nodeid = item.nodeid.replace("\\", "/")
+        filename = nodeid.split("::")[0].split("/")[-1]
+        if filename in order:
+            return order.index(filename)
+        return len(order)
+
+    items.sort(key=get_index)
+

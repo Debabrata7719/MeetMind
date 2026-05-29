@@ -266,6 +266,39 @@ For the full API reference see **[API.md](API.md)**.
 
 ---
 
+## Docker Setup
+
+You can run the entire stack (FastAPI, Next.js, MySQL, Redis) in isolated containers using Docker Compose.
+
+### Prerequisite: Set environment variables
+Before building/running, make sure `.env` is created in the project root and populated with your settings:
+- `GROQ_API_KEY`
+- `EMAIL_ADDRESS` and `EMAIL_APP_PASSWORD`
+- `DB_PASSWORD` (used by both the MySQL container and backend container)
+
+The Docker stack automatically overrides `DB_HOST` to `mysql` and `REDIS_URL` to `redis://redis:6379` internally.
+
+### 1. Build the containers
+```bash
+docker compose build
+```
+
+### 2. Run the services
+```bash
+docker compose up
+```
+
+This will automatically:
+- Start the `mysql` and `redis` containers with healthchecks.
+- Run Alembic database migrations (`alembic upgrade head`) inside the backend container.
+- Build the Next.js frontend in standalone mode and expose it at `http://localhost:3000`.
+- Start the FastAPI backend and expose it at `http://localhost:8000`.
+
+### Caching models across rebuilds
+A named Docker volume `model_cache` is mapped to `/root/.cache/huggingface` inside the backend container. This ensures that transcription models (`faster-whisper`) and embedding models (`sentence-transformers`) are downloaded once on the first launch and cached permanently on the host machine.
+
+---
+
 ## How the pipeline works
 
 ```
@@ -384,8 +417,6 @@ pytest tests/test_services.py -v -s -p no:warnings
 - Sentiment analysis per speaker
 - Action item auto-assignment
 - Multi-language highlight extraction
-- Docker containerization (`api`, `worker`, `frontend`, `redis`, `mysql`)
 - Email notification when long processing jobs complete
 - Pagination for the meetings list (`?page=&limit=`)
-- CI/CD pipeline (GitHub Actions — pytest + frontend build on every PR)
 - Load testing before production launch

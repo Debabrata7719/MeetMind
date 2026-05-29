@@ -1,0 +1,31 @@
+# ─────────────────────────────────────────────
+#  Stage 1 — Install & Build Next.js
+# ─────────────────────────────────────────────
+FROM node:20-alpine AS builder
+
+WORKDIR /frontend
+
+COPY frontend/package*.json ./
+RUN npm ci --prefer-offline
+
+COPY frontend/ .
+RUN npm run build
+
+
+# ─────────────────────────────────────────────
+#  Stage 2 — Runtime: standalone Next.js output
+# ─────────────────────────────────────────────
+FROM node:20-alpine AS runtime
+
+WORKDIR /frontend
+
+ENV NODE_ENV=production
+
+# Next.js standalone mode copies only what's needed to run
+COPY --from=builder /frontend/.next/standalone ./
+COPY --from=builder /frontend/.next/static ./.next/static
+COPY --from=builder /frontend/public ./public
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]

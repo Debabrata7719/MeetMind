@@ -1,0 +1,52 @@
+# ── Python ───────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+venv/
+.venv/
+env/
+
+# ── Tests & dev tooling ──────────────────────────
+tests/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# ── Data & generated files ───────────────────────
+uploads/*
+data/intermediate/*
+data/vectordb/*
+Notes/*
+
+# ── Node / Frontend build artefacts ─────────────
+frontend/node_modules/
+frontend/.next/
+frontend/.turbo/
+
+# ── Git & IDE ────────────────────────────────────
+.git/
+.gitignore
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# ── Secrets (never bake into image) ─────────────
+.env
+.env.local
+*.pem
+*.key
+
+# ── Docs & assets ────────────────────────────────
+assets/
+*.md
+API.md
+README.md
