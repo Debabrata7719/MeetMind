@@ -43,6 +43,8 @@ Upload or record a meeting (MP4 / MP3 / WAV), and the system will:
 | Styling | Tailwind CSS v4 |
 | Export | ReportLab (PDF), python-docx (DOCX) |
 | Testing | Pytest — real pipeline + mocked unit tests |
+| Containerization | Docker + Docker Compose |
+| CI/CD | GitHub Actions |
 | Python | 3.13 |
 
 ---
@@ -165,11 +167,23 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. FFmpeg
+### 4. System Dependencies (FFmpeg & PortAudio)
 
-FFmpeg must be available. Either:
-- Install system-wide so it's on `PATH`, **or**
-- Update `_FFMPEG_FALLBACK_BIN` in `app/core/config.py` to point to your local FFmpeg `bin/` folder
+FFmpeg and PortAudio must be available on your system for audio extraction and live recording.
+
+**Windows:**
+- Download FFmpeg and add it to your `PATH`, or update `_FFMPEG_FALLBACK_BIN` in `app/core/config.py` to point to your local FFmpeg `bin/` folder.
+- `sounddevice` (PortAudio) usually works out of the box on Windows.
+
+**macOS:**
+```bash
+brew install ffmpeg portaudio
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt-get install ffmpeg libportaudio2 portaudio19-dev
+```
 
 ### 5. MySQL Setup
 
@@ -276,7 +290,7 @@ Before building/running, make sure `.env` is created in the project root and pop
 - `EMAIL_ADDRESS` and `EMAIL_APP_PASSWORD`
 - `DB_PASSWORD` (used by both the MySQL container and backend container)
 
-The Docker stack automatically overrides `DB_HOST` to `mysql` and `REDIS_URL` to `redis://redis:6379` internally.
+The Docker stack automatically overrides `DB_HOST` to `mysql` and `REDIS_URL` to `redis://redis:6379` internally. System dependencies like `ffmpeg` and `libportaudio2` are automatically installed within the backend container.
 
 ### 1. Build the containers
 ```bash
@@ -365,6 +379,19 @@ pytest tests/test_services.py -v -s -p no:warnings
 - faster-whisper runs **once per session** — subsequent test files reuse the cached result
 - LLM tests (highlights, chat, services steps 5-6) auto-skip if `GROQ_API_KEY` is not set
 - Recording tests are skipped (requires audio hardware)
+
+---
+
+## CI/CD Pipeline
+
+The project includes a robust **GitHub Actions** CI/CD pipeline (`.github/workflows/ci.yml`) that automatically runs on every push and pull request to the `main` branch.
+
+The pipeline automatically:
+- Spins up isolated **MySQL 8.0** and **Redis 7** service containers with health checks.
+- Sets up Python 3.13 and installs necessary system dependencies (`ffmpeg`, `libportaudio2`, `portaudio19-dev`).
+- Creates a minimal `.env` file for testing.
+- Runs Alembic database migrations.
+- Executes the `pytest` suite, downloading a dummy 1-second `.mp4` file for the audio extraction tests.
 
 ---
 
