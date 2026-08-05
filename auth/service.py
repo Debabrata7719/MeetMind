@@ -15,16 +15,16 @@ def get_user_by_email(db: Session, email: str) -> User | None:
     return db.execute(stmt).scalar_one_or_none()
 
 
-def create_user(db: Session, email: str, plain_password: str) -> User:
+def create_user(db: Session, name: str, email: str, plain_password: str) -> User:
     hashed_password = hash_password(plain_password)
-    user = User(email=email, password=hashed_password)
+    user = User(name=name, email=email, password=hashed_password)
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
 
 
-def save_meeting(db: Session, meeting_id: str, user_id: int, name: str = "Untitled Meeting") -> Meeting:
+def save_meeting(db: Session, meeting_id: str, user_id: int, name: str = "Untitled Meeting", duration: int = 0) -> Meeting:
     stmt = select(Meeting).where(Meeting.meeting_id == meeting_id)
     meeting = db.execute(stmt).scalar_one_or_none()
 
@@ -33,8 +33,9 @@ def save_meeting(db: Session, meeting_id: str, user_id: int, name: str = "Untitl
             # Overwriting someone else's meeting isn't allowed, but practically meeting_ids are UUIDs
             pass
         meeting.name = name
+        meeting.duration = duration
     else:
-        meeting = Meeting(meeting_id=meeting_id, user_id=user_id, name=name)
+        meeting = Meeting(meeting_id=meeting_id, user_id=user_id, name=name, duration=duration)
         db.add(meeting)
 
     db.commit()
@@ -87,5 +88,14 @@ def update_password(db: Session, email: str, new_plain_password: str) -> bool:
     if not user:
         return False
     user.password = hash_password(new_plain_password)
+    db.commit()
+    return True
+
+def update_user_name(db: Session, email: str, new_name: str) -> bool:
+    stmt = select(User).where(User.email == email)
+    user = db.execute(stmt).scalar_one_or_none()
+    if not user:
+        return False
+    user.name = new_name
     db.commit()
     return True

@@ -12,13 +12,15 @@ Auth endpoints:
 """
 
 import os
+import httpx
 import traceback
 from fastapi import APIRouter, HTTPException, Response, Request, Depends
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from auth.db import get_db
-from auth.service import create_user, get_user_by_email, update_password
+from auth.service import create_user, get_user_by_email, update_password, update_user_name
 from auth.email_service import send_otp_email
 from auth.security import (
     validate_password,
@@ -27,7 +29,7 @@ from auth.security import (
     decode_access_token,
     EXPIRE_HOURS,
 )
-from auth.schemas import RegisterRequest, LoginRequest, UserResponse
+from auth.schemas import RegisterRequest, LoginRequest, UserResponse, UpdateNameRequest, UpdatePasswordRequest
 from app.core.rate_limit import limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -48,11 +50,11 @@ def register(request: Request, payload: RegisterRequest, db: Session = Depends(g
     # 2. Validate password rules
     errors = validate_password(payload.password)
     if errors:
-        raise HTTPException(400, {"detail": "Weak password", "rules": errors})
+        raise HTTPException(400, "Weak password: " + ", ".join(errors))
 
     # 3. Create user
     try:
-        create_user(db, payload.email, payload.password)
+        create_user(db, payload.name, payload.email, payload.password)
     except IntegrityError:
         raise HTTPException(409, "Email already registered")
     except Exception:
@@ -115,7 +117,7 @@ def logout(response: Response):
 # ─── Me (session check) ────────────────────────────────────────────────────────
 
 @router.get("/me", response_model=UserResponse)
-def me(request: Request):
+def me(request: Request, db: Session = Depends(get_db)):
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         raise HTTPException(401, "Not authenticated")
@@ -125,7 +127,55 @@ def me(request: Request):
     except Exception:
         raise HTTPException(401, "Invalid or expired session")
 
-    return UserResponse(id=int(payload["sub"]), email=payload["email"])
+    user = get_user_by_email(db, payload["email"])
+    if not user:
+        raise HTTPException(401, "User no longer exists")
+
+    return UserResponse(id=user.id, name=user.name, email=user.email)
+
+
+@router.put("/me/name")
+def update_name(request: Request, payload: UpdateNameRequest, db: Session = Depends(get_db)):
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        raise HTTPException(401, "Not authenticated")
+    try:
+        token_payload = decode_access_token(token)
+    except Exception:
+        raise HTTPException(401, "Invalid or expired session")
+        
+    success = update_user_name(db, token_payload["email"], payload.name)
+    if not success:
+        raise HTTPException(404, "User not found")
+    return {"message": "Name updated successfully"}
+
+
+@router.put("/me/password")
+def change_password(request: Request, payload: UpdatePasswordRequest, db: Session = Depends(get_db)):
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        raise HTTPException(401, "Not authenticated")
+    try:
+        token_payload = decode_access_token(token)
+    except Exception:
+        raise HTTPException(401, "Invalid or expired session")
+
+    user = get_user_by_email(db, token_payload["email"])
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    if not verify_password(payload.old_password, user.password):
+        raise HTTPException(400, "Incorrect old password")
+
+    if payload.new_password != payload.confirm_password:
+        raise HTTPException(400, "New passwords do not match")
+
+    errors = validate_password(payload.new_password)
+    if errors:
+        raise HTTPException(400, "Weak password: " + ", ".join(errors))
+
+    update_password(db, user.email, payload.new_password)
+    return {"message": "Password updated successfully"}
 
 
 # ─── Forgot Password ───────────────────────────────────────────────────────────
@@ -205,7 +255,7 @@ def reset_password(payload: dict, db: Session = Depends(get_db)):
 
     errors = validate_password(new_password)
     if errors:
-        raise HTTPException(400, {"detail": "Weak password", "rules": errors})
+        raise HTTPException(400, "Weak password: " + ", ".join(errors))
 
     success = update_password(db, email, new_password)
     if not success:
@@ -216,3 +266,65 @@ def reset_password(payload: dict, db: Session = Depends(get_db)):
     r.delete(f"otp_verified:{email}")
 
     return {"message": "Password reset successfully. You can now log in."}
+
+
+# ─── Google OAuth ──────────────────────────────────────────────────────────────
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+GOOGLE_REDIRECT_URI = "http://localhost:8000/auth/google/callback"
+
+@router.get("/google/login")
+def google_login():
+    return RedirectResponse(
+        url=f"https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id={GOOGLE_CLIENT_ID}&redirect_uri={GOOGLE_REDIRECT_URI}&scope=openid%20profile%20email&access_type=offline"
+    )
+
+@router.get("/google/callback")
+async def google_callback(code: str, db: Session = Depends(get_db)):
+    token_url = "https://oauth2.googleapis.com/token"
+    data = {
+        "code": code,
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "grant_type": "authorization_code",
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(token_url, data=data)
+        access_token = response.json().get("access_token")
+        if not access_token:
+            raise HTTPException(400, "Failed to retrieve access token from Google")
+        
+        user_info = await client.get(
+            "https://www.googleapis.com/oauth2/v1/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        user_data = user_info.json()
+    
+    email = user_data.get("email")
+    name = user_data.get("name")
+    
+    if not email:
+        raise HTTPException(400, "Failed to retrieve email from Google")
+        
+    user = get_user_by_email(db, email)
+    if not user:
+        from auth.models import User
+        user = User(name=name, email=email, password=None, auth_provider="google")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    
+    token = create_access_token(user.id, user.email)
+    response = RedirectResponse(url="http://localhost:3000/dashboard")
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=EXPIRE_HOURS * 3600,
+    )
+    return response

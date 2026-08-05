@@ -9,6 +9,7 @@ import re
 
 
 class RegisterRequest(BaseModel):
+    name: str
     email: EmailStr
     password: str
     confirm_password: str
@@ -31,4 +32,13 @@ class LoginRequest(BaseModel):
 
 class UserResponse(BaseModel):
     id: int
+    name: str | None
     email: str
+
+class UpdateNameRequest(BaseModel):
+    name: str
+
+class UpdatePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+    confirm_password: str

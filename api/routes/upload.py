@@ -13,6 +13,24 @@ from app.core.job_progress import set_job_queued
 from auth.dependencies import get_current_user
 from auth.db import get_db
 from auth.service import save_meeting
+import subprocess
+from app.core.config import FFMPEG_EXE
+import os
+
+def get_duration(file_path: str) -> int:
+    try:
+        ffprobe_exe = FFMPEG_EXE.replace("ffmpeg.exe", "ffprobe.exe")
+        if not os.path.exists(ffprobe_exe):
+            ffprobe_exe = "ffprobe"
+        result = subprocess.run(
+            [ffprobe_exe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(file_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        return int(float(result.stdout.strip()))
+    except Exception:
+        return 0
 
 router = APIRouter()
 
@@ -68,8 +86,9 @@ async def upload(
                     raise HTTPException(413, "File exceeds 200MB limit")
                 f.write(chunk)
 
-        # Save meeting to MySQL immediately so it appears in history
-        save_meeting(db, meeting_id, user["user_id"], original_name)
+        # Calculate duration and save meeting
+        duration = get_duration(str(file_path))
+        save_meeting(db, meeting_id, user["user_id"], original_name, duration)
 
         # Initialize job status in Redis as "queued"
         set_job_queued(meeting_id)

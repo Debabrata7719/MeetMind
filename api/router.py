@@ -12,6 +12,7 @@ from api.routes.recording import router as recording_router
 from api.routes.meeting import router as meeting_router
 from api.routes.download import router as download_router
 from api.routes.status import router as status_router
+from api.routes.dashboard import router as dashboard_router
 
 api_router = APIRouter()
 
@@ -20,3 +21,4 @@ api_router.include_router(recording_router)
 api_router.include_router(meeting_router)
 api_router.include_router(download_router)
 api_router.include_router(status_router)
+api_router.include_router(dashboard_router)

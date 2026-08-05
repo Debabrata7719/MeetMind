@@ -12,6 +12,8 @@ from api.models import ChatRequest, NotesRequest, MeetingName
 from auth.dependencies import get_current_user
 from auth.db import get_db
 from auth.service import get_user_meetings, update_meeting_name, meeting_belongs_to_user, delete_meeting_from_db
+from auth.models import Meeting, AIHighlight, ChatMessage
+from sqlalchemy import select
 from app.core.rate_limit import limiter
 
 router = APIRouter()
@@ -32,6 +34,14 @@ async def notes(request: Request, payload: NotesRequest, user: dict = Depends(ge
     _assert_ownership(db, payload.meeting_id, user["user_id"])
     try:
         result = await run_in_threadpool(generate_notes, payload.meeting_id)
+        
+        # Save highlight to database for metrics
+        stmt = select(Meeting).where(Meeting.meeting_id == payload.meeting_id)
+        meeting = db.execute(stmt).scalar_one_or_none()
+        if meeting:
+            db.add(AIHighlight(meeting_id=meeting.id, content=result))
+            db.commit()
+
         return {"notes": result}
     except Exception:
         traceback.print_exc()
@@ -43,9 +53,22 @@ async def notes(request: Request, payload: NotesRequest, user: dict = Depends(ge
 async def chat(request: Request, payload: ChatRequest, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     _assert_ownership(db, payload.meeting_id, user["user_id"])
     try:
+        # Save user question to database for metrics
+        stmt = select(Meeting).where(Meeting.meeting_id == payload.meeting_id)
+        meeting = db.execute(stmt).scalar_one_or_none()
+        if meeting:
+            db.add(ChatMessage(meeting_id=meeting.id, role='user', content=payload.question))
+            db.commit()
+
         answer = await run_in_threadpool(
             ask_question, payload.question, payload.meeting_id, user["user_id"]
         )
+
+        # Save AI answer
+        if meeting:
+            db.add(ChatMessage(meeting_id=meeting.id, role='ai', content=answer))
+            db.commit()
+
         return {"answer": answer}
     except Exception:
         traceback.print_exc()
