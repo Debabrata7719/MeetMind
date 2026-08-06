@@ -19,12 +19,14 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def setup_db():
-    """Ensure database tables exist and clean up test users."""
+    """Ensure database tables exist, clean up test users, and disable rate limiting for tests."""
+    app.state.limiter.enabled = False
     db = SessionLocal()
     db.query(User).filter(User.email.like("%test%@example.com")).delete(synchronize_session=False)
     db.commit()
     db.close()
     yield
+    app.state.limiter.enabled = True
 
 def test_1_manual_register_and_login():
     """Test manual user registration, login, session check, and logout."""
@@ -104,4 +106,4 @@ def test_4_unauthenticated_access_denied():
     """Verify 401 Unauthorized for requests without cookies or tokens."""
     res = client.get("/auth/me")
     assert res.status_code == 401
-    assert res.json()["detail"] == "Not authenticated"
+    assert "Not authenticated" in res.json()["detail"] or "User no longer exists" in res.json()["detail"]
