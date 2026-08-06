@@ -83,7 +83,8 @@ def login(request: Request, payload: LoginRequest, response: Response, db: Sessi
     # 3. Issue JWT and set httpOnly cookie
     token = create_access_token(user.id, user.email)
 
-    is_prod = os.getenv("ENV") == "production"
+    is_https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    is_prod = os.getenv("ENV") == "production" or is_https
 
     response.set_cookie(
         key=COOKIE_NAME,
@@ -346,13 +347,16 @@ async def google_callback(request: Request, code: str, db: Session = Depends(get
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
     response = RedirectResponse(url=f"{frontend_url}/dashboard")
     
-    is_prod = os.getenv("ENV") == "production"
+    is_https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    is_prod = os.getenv("ENV") == "production" or is_https
+
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=True if is_prod else False,
+        secure=is_prod,
         samesite="none" if is_prod else "lax",
         max_age=EXPIRE_HOURS * 3600,
+        path="/"
     )
     return response
