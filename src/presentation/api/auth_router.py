@@ -277,22 +277,30 @@ def reset_password(payload: dict, db: Session = Depends(get_db)):
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
-GOOGLE_REDIRECT_URI = "http://localhost:8000/auth/google/callback"
 
-@router.get("/google/login")
-def google_login():
+@router.api_route("/google/login", methods=["GET", "HEAD"])
+def google_login(request: Request):
+    backend_url = os.getenv("BACKEND_URL", str(request.base_url).rstrip("/"))
+    redirect_uri = f"{backend_url}/auth/google/callback"
+    
+    if request.method == "HEAD":
+        return Response(status_code=200)
+        
     return RedirectResponse(
-        url=f"https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id={GOOGLE_CLIENT_ID}&redirect_uri={GOOGLE_REDIRECT_URI}&scope=openid%20profile%20email&access_type=offline"
+        url=f"https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id={GOOGLE_CLIENT_ID}&redirect_uri={redirect_uri}&scope=openid%20profile%20email&access_type=offline"
     )
 
 @router.get("/google/callback")
-async def google_callback(code: str, db: Session = Depends(get_db)):
+async def google_callback(request: Request, code: str, db: Session = Depends(get_db)):
+    backend_url = os.getenv("BACKEND_URL", str(request.base_url).rstrip("/"))
+    redirect_uri = f"{backend_url}/auth/google/callback"
+    
     token_url = "https://oauth2.googleapis.com/token"
     data = {
         "code": code,
         "client_id": GOOGLE_CLIENT_ID,
         "client_secret": GOOGLE_CLIENT_SECRET,
-        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "redirect_uri": redirect_uri,
         "grant_type": "authorization_code",
     }
     
@@ -335,13 +343,16 @@ async def google_callback(code: str, db: Session = Depends(get_db)):
         db.refresh(user)
     
     token = create_access_token(user.id, user.email)
-    response = RedirectResponse(url="http://localhost:3000/dashboard")
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
+    response = RedirectResponse(url=f"{frontend_url}/dashboard")
+    
+    is_prod = os.getenv("ENV") == "production"
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=True if is_prod else False,
+        samesite="none" if is_prod else "lax",
         max_age=EXPIRE_HOURS * 3600,
     )
     return response
