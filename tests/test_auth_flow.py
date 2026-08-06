@@ -12,8 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
 from main import app
-from src.infrastructure.database import SessionLocal, engine, Base
-from src.domain.models import User
+from src.infrastructure.database import SessionLocal, engine
+from src.domain.models import User, Base
 
 client = TestClient(app)
 
