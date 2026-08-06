@@ -9,9 +9,9 @@ All routes live in api/routes/ and auth/.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.router import api_router
-from auth.router import router as auth_router
-from app.core.rate_limit import limiter
+from src.presentation.api.router import api_router
+from src.presentation.api.auth_router import router as auth_router
+from src.presentation.core.rate_limit import limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 import os
@@ -35,7 +35,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 import shutil
 import redis
 from sqlalchemy import text
-from auth.db import engine
+from src.infrastructure.database import engine
 
 @app.on_event("startup")
 async def on_startup():
@@ -64,27 +64,18 @@ async def on_startup():
     except Exception as e:
         raise RuntimeError(f"FATAL: Could not connect to Redis server. {e}")
         
-    print("[Startup] All systems go. Sweeping ghost folders...")
+    # 4. Ping Qdrant
+    try:
+        qdrant_url = os.getenv("QDRANT_URL")
+        qdrant_api_key = os.getenv("QDRANT_API_KEY")
+        if qdrant_url and qdrant_api_key:
+            from qdrant_client import QdrantClient
+            client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+            client.get_collections()
+    except Exception as e:
+        raise RuntimeError(f"FATAL: Could not connect to Qdrant server. {e}")
 
-    """
-    Sweeps through data/vectordb and automatically deletes any ghost folders 
-    left behind due to Windows file locks.
-    """
-    vectordb_base = os.path.join("data", "vectordb")
-    if not os.path.exists(vectordb_base):
-        return
-        
-    for meeting_dir in os.listdir(vectordb_base):
-        dir_path = os.path.join(vectordb_base, meeting_dir)
-        if os.path.isdir(dir_path):
-            sqlite_path = os.path.join(dir_path, "chroma.sqlite3")
-            # If the sqlite database is 0 bytes or the folder is totally empty
-            if (os.path.exists(sqlite_path) and os.path.getsize(sqlite_path) == 0) or len(os.listdir(dir_path)) == 0:
-                try:
-                    shutil.rmtree(dir_path)
-                    print(f"[Cleanup] Swept ghost vectordb folder: {meeting_dir}")
-                except Exception as e:
-                    print(f"[Cleanup Warning] Could not sweep {meeting_dir}: {e}")
+    print("[Startup] All systems go.")
 
 # ─── CORS ──────────────────────────────────────────────────────────────────────
 # allow_credentials=True + explicit origins required for httpOnly cookies
