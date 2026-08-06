@@ -1,46 +1,46 @@
 # ─── Core Web Framework & Server ──────────────────────────────────────────
-fastapi==0.115.8
-uvicorn==0.34.0
-gunicorn==23.0.0
-python-multipart==0.0.27
-slowapi==0.1.9
+fastapi
+uvicorn
+gunicorn
+python-multipart
+slowapi
 
 # ─── Database & Migrations ───────────────────────────────────────────────
-SQLAlchemy==2.0.38
-psycopg2-binary==2.9.10
-alembic==1.14.1
+SQLAlchemy
+psycopg2-binary
+alembic
 
 # ─── Auth, Security & Validation ──────────────────────────────────────────
-passlib==1.7.4
-bcrypt==4.3.0
-python-jose==3.5.0
-email-validator==2.2.0
-httpx==0.28.1
+passlib
+bcrypt
+python-jose
+email-validator
+httpx
 
 # ─── Task Queue & Redis Caching ──────────────────────────────────────────
-celery==5.4.0
-redis==5.0.1
+celery
+redis
 
 # ─── AI Processing & Media SDKs ───────────────────────────────────────────
-assemblyai==0.35.0
-voyageai==0.3.2
-qdrant-client==1.19.0
-cloudinary==1.45.0
-groq==0.18.0
+assemblyai
+voyageai
+qdrant-client
+cloudinary
+groq
 
 # ─── LangChain Ecosystem ──────────────────────────────────────────────────
-langchain==0.3.18
-langchain-community==0.3.18
-langchain-core==0.3.38
-langchain-groq==0.2.4
-langchain-qdrant==0.2.0
+langchain
+langchain-community
+langchain-core
+langchain-groq
+langchain-qdrant
 
 # ─── Configuration & Utilities ────────────────────────────────────────────
-python-dotenv==1.0.1
-pydantic==2.10.6
-pydantic-settings==2.7.1
-filetype==1.2.0
-requests==2.32.3
+python-dotenv
+pydantic
+pydantic-settings
+filetype
+requests
 
 # ─── Platform Specific ────────────────────────────────────────────────────
-pywin32==312; sys_platform == 'win32'
+pywin32; sys_platform == 'win32'
