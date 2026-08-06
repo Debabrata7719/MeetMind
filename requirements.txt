@@ -42,6 +42,8 @@ pydantic
 pydantic-settings
 filetype
 requests
+reportlab
+python-docx
 
 # ─── Platform Specific ────────────────────────────────────────────────────
 pywin32; sys_platform == 'win32'
