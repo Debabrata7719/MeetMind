@@ -45,6 +45,6 @@ requests
 
 # ─── Platform Specific ────────────────────────────────────────────────────
 pywin32; sys_platform == 'win32'
-sounddevice
+sounddevice; sys_platform == 'win32'
+soundfile; sys_platform == 'win32'
 numpy
-soundfile

@@ -4,7 +4,7 @@ try:
     import sounddevice as sd
     import numpy as np
     import soundfile as sf
-except ImportError:
+except Exception:
     sd = None
     np = None
     sf = None
