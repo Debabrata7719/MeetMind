@@ -16,8 +16,8 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-from auth.models import Base
-from auth.db import DATABASE_URL
+from src.domain.models import Base
+from src.infrastructure.database import DATABASE_URL
 target_metadata = Base.metadata
 
 config.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
