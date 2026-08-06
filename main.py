@@ -31,7 +31,7 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# ─── Startup Health Checks & Sweeper ───────────────────────────────────────────
+# ─── Startup Health Checks & Sweeper ─────────────────────────────────────────
 import shutil
 import redis
 from sqlalchemy import text
@@ -103,7 +103,7 @@ app.include_router(api_router)
 app.include_router(auth_router)
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root():
     return {"message": "API running"}
 
