@@ -14,6 +14,7 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const [userEmail, setUserEmail] = useState<string>("Loading...");
   const [userName, setUserName] = useState<string>("");
+  const [userImage, setUserImage] = useState<string | null>(null);
 
   useEffect(() => {
     // In a real app, you would fetch user session info from /auth/me
@@ -27,6 +28,7 @@ export default function DashboardLayout({
           const data = await res.json();
           setUserEmail(data.email);
           setUserName(data.name || "");
+          setUserImage(data.profile_image_url || null);
         } else {
           router.push("/login");
         }
@@ -135,6 +137,13 @@ export default function DashboardLayout({
                 {userName || (userEmail !== "Loading..." ? userEmail.split("@")[0] : "User")}
               </p>
             </div>
+            {userImage ? (
+                <img src={userImage} alt="Profile" className="w-10 h-10 rounded-full border border-outline-variant object-cover" />
+            ) : (
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                    <span className="material-symbols-outlined text-primary">person</span>
+                </div>
+            )}
           </div>
         </div>
       </header>

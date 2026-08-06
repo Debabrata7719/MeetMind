@@ -16,29 +16,34 @@ export default function MeetingWorkspacePage() {
   const [highlights, setHighlights] = useState<string | null>(null);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
 
-  // Status Polling
+  // Status via WebSocket
   useEffect(() => {
     if (!meetingId) return;
 
-    let interval: NodeJS.Timeout;
-    const fetchStatus = async () => {
+    // Fetch initial status just in case it's already done
+    fetch(`${API_BASE}/status/${meetingId}`, { credentials: "include" })
+      .then(res => res.json())
+      .then(data => setJobStatus(data))
+      .catch(console.error);
+
+    const wsUrl = API_BASE.replace(/^http/, 'ws') + `/ws/${meetingId}`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onmessage = (event) => {
       try {
-        const res = await fetch(`${API_BASE}/status/${meetingId}`, { credentials: "include" });
-        if (res.ok) {
-          const data = await res.json();
-          setJobStatus(data);
-          if (data.status === "done" || data.status === "failed") {
-            clearInterval(interval);
-          }
+        const data = JSON.parse(event.data);
+        setJobStatus(data);
+        if (data.status === "done" || data.status === "failed") {
+          ws.close();
         }
       } catch (err) {
-        console.error("Failed to fetch status:", err);
+        console.error(err);
       }
     };
 
-    fetchStatus();
-    interval = setInterval(fetchStatus, 3000);
-    return () => clearInterval(interval);
+    return () => {
+      ws.close();
+    };
   }, [meetingId]);
 
   // Fetch Highlights on demand
@@ -73,19 +78,47 @@ export default function MeetingWorkspacePage() {
     setIsChatLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ meeting_id: meetingId, question: userMsg })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setMessages(prev => [...prev, { role: "assistant", content: data.answer }]);
-      }
+      const wsUrl = API_BASE.replace(/^http/, 'ws') + `/ws/chat/${meetingId}`;
+      const ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ question: userMsg }));
+        // Add a placeholder assistant message
+        setMessages(prev => [...prev, { role: "assistant", content: "" }]);
+        setIsChatLoading(false); // Stop loading animation since streaming started
+      };
+
+      ws.onmessage = (event) => {
+        const chunk = event.data;
+        if (chunk === "[DONE]") {
+          ws.close();
+        } else if (chunk.startsWith("[ERROR]")) {
+          console.error(chunk);
+          ws.close();
+        } else {
+          setMessages(prev => {
+            const newMsgs = [...prev];
+            const lastMsg = newMsgs[newMsgs.length - 1];
+            if (lastMsg && lastMsg.role === "assistant") {
+              // Create a new object to ensure React triggers a re-render
+              newMsgs[newMsgs.length - 1] = { ...lastMsg, content: lastMsg.content + chunk };
+            }
+            return newMsgs;
+          });
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error("WebSocket error:", err);
+        setIsChatLoading(false);
+        ws.close();
+      };
+      
+      ws.onclose = () => {
+        setIsChatLoading(false);
+      };
     } catch (err) {
       console.error(err);
-    } finally {
       setIsChatLoading(false);
     }
   };

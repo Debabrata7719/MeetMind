@@ -22,18 +22,47 @@ export default function MeetingsPage() {
     if (!selectedFile) return;
     setIsUploading(true);
 
-    const formData = new FormData();
-    formData.append("file", selectedFile);
-
     try {
+      // 1. Get Cloudinary signature from our backend
+      const sigRes = await fetch(`${API_BASE}/upload/signature`, {
+        credentials: "include",
+      });
+      if (!sigRes.ok) throw new Error("Failed to get upload signature");
+      const sigData = await sigRes.json();
+
+      // 2. Upload directly to Cloudinary
+      const cloudinaryFormData = new FormData();
+      cloudinaryFormData.append("file", selectedFile);
+      cloudinaryFormData.append("api_key", sigData.api_key);
+      cloudinaryFormData.append("timestamp", sigData.timestamp);
+      cloudinaryFormData.append("signature", sigData.signature);
+
+      const cloudRes = await fetch(
+        `https://api.cloudinary.com/v1_1/${sigData.cloud_name}/auto/upload`,
+        {
+          method: "POST",
+          body: cloudinaryFormData,
+        }
+      );
+      
+      if (!cloudRes.ok) throw new Error("Failed to upload to Cloudinary");
+      const cloudData = await cloudRes.json();
+
+      // 3. Send the Cloudinary URL to our backend
       const res = await fetch(`${API_BASE}/upload`, {
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
         credentials: "include",
-        body: formData,
+        body: JSON.stringify({
+          file_url: cloudData.secure_url,
+          original_name: selectedFile.name.split('.')[0]
+        }),
       });
 
       if (!res.ok) {
-        throw new Error("Upload failed");
+        throw new Error("Backend failed to start processing");
       }
 
       const data = await res.json();
