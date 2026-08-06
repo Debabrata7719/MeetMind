@@ -107,6 +107,6 @@ app.include_router(auth_router)
 async def root():
     return {"message": "API running"}
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
     return {"status": "ok"}
