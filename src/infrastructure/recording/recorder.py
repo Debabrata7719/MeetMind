@@ -1,8 +1,13 @@
 # app/recording/recorder.py
 
-import sounddevice as sd
-import numpy as np
-import soundfile as sf
+try:
+    import sounddevice as sd
+    import numpy as np
+    import soundfile as sf
+except ImportError:
+    sd = None
+    np = None
+    sf = None
 
 FS = 16000
 DEVICE_ID = 1      #  Stereo Mix (Realtek)
