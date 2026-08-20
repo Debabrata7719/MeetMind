@@ -167,7 +167,7 @@ flowchart TB
     WSRouter -->|Subscribe| PubSub
     WSRouter -->|Check Cache| SemanticCache
     WSRouter -->|Retrieve History| ChatHistoryStore
-    WSRouter -->|Vector Search (k=7)| QdrantDB
+    WSRouter -->|Vector Search k=7| QdrantDB
     WSRouter -->|Stream Inference Tokens| GroqChat
     WSRouter -->|Persist Q&A| PostgresDB
 
