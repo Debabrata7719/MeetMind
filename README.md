@@ -103,17 +103,9 @@ flowchart TB
     %% PERSISTENCE & CLOUD STORAGE LAYER
     %% ─────────────────────────────────────────────────────────────
     subgraph StorageLayer["💾 Persistence & Cloud Storage"]
-        PostgresDB[("Supabase PostgreSQL (SQLAlchemy)
-• Users
-• Meetings
-• AI Highlights
-• Chat Messages
-• Webhooks")]:::storage
-        QdrantDB[("Qdrant Cloud Vector Database
-• Collection: meetings
-• Metadata Filter: meeting_id")]:::storage
-        CloudinaryStore["Cloudinary Storage
-(Direct Ingestion -> Auto Wipe)"]:::storage
+        PostgresDB[("Supabase PostgreSQL DB")]:::storage
+        QdrantDB[("Qdrant Cloud Vector DB")]:::storage
+        CloudinaryStore["Cloudinary Storage (Direct Ingestion)"]:::storage
     end
 
     %% ─────────────────────────────────────────────────────────────
