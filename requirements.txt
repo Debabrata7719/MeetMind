@@ -35,6 +35,7 @@ langchain-core
 langchain-groq
 langchain-qdrant
 langchain-voyageai
+langchain-google-genai
 
 # ─── Configuration & Utilities ────────────────────────────────────────────
 python-dotenv

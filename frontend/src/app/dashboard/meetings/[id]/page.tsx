@@ -47,19 +47,37 @@ export default function MeetingWorkspacePage() {
   }, [meetingId]);
 
   // Fetch Highlights on demand
-  const generateHighlights = () => {
+  const generateHighlights = async () => {
     if (highlights || isGeneratingNotes) return;
     setIsGeneratingNotes(true);
-    fetch(`${API_BASE}/notes`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ meeting_id: meetingId })
-    })
-      .then(res => res.json())
-      .then(data => setHighlights(data.notes))
-      .catch(console.error)
-      .finally(() => setIsGeneratingNotes(false));
+    setHighlights("");
+    try {
+      const response = await fetch(`${API_BASE}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ meeting_id: meetingId })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch highlights: ${response.statusText}`);
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) return;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        setHighlights(prev => (prev || "") + chunk);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsGeneratingNotes(false);
+    }
   };
 
   // Chat State

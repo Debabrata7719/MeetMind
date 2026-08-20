@@ -106,7 +106,7 @@ export default function HistoryPage() {
                     timer
                   </span>
                   <span className="text-label-sm font-label-sm text-on-surface">
-                    45m
+                    {meeting.duration ? `${Math.round(meeting.duration / 60)}m` : "0m"}
                   </span>
                 </div>
               </div>
@@ -120,7 +120,7 @@ export default function HistoryPage() {
                   {meeting.name || "Untitled Meeting"}
                 </h4>
                 <p className="text-on-surface-variant text-label-md font-label-md mb-4">
-                  {new Date(meeting.created_at).toLocaleDateString()}
+                  {meeting.created_at ? new Date(meeting.created_at).toLocaleDateString() : "Date Unknown"}
                 </p>
                 <div className="mt-auto pt-4 border-t border-outline-variant/20 flex justify-between items-center">
                   <div className="flex -space-x-2">

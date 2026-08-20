@@ -78,17 +78,125 @@ export default function MeetingsPage() {
     fileInputRef.current?.click();
   };
 
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const meetingIdRef = useRef<string | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const isRecordingRef = useRef<boolean>(false);
+  const rotationIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const startLiveRecording = async () => {
+    try {
+      // 1. Generate unique meeting ID
+      const newMeetingId = "live_" + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      meetingIdRef.current = newMeetingId;
+
+      // 2. Call backend to start live session
+      const startRes = await fetch(`${API_BASE}/meetings/${newMeetingId}/live/start?name=Live%20Meeting%20Recording`, {
+        method: "POST",
+        credentials: "include"
+      });
+      if (!startRes.ok) throw new Error("Failed to start live session on backend");
+
+      // 3. Get mic stream
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+
+      isRecordingRef.current = true;
+      let chunks: Blob[] = [];
+
+      // 4. Setup MediaRecorder
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        if (chunks.length > 0 && meetingIdRef.current) {
+          const blob = new Blob(chunks, { type: "audio/webm" });
+          chunks = []; // Reset for next rotation
+          
+          const chunkFormData = new FormData();
+          chunkFormData.append("file", blob, "chunk.webm");
+          try {
+            await fetch(`${API_BASE}/meetings/${meetingIdRef.current}/live/chunk`, {
+              method: "POST",
+              body: chunkFormData,
+              credentials: "include"
+            });
+            console.log("[Mic] Self-contained chunk uploaded successfully");
+          } catch (chunkErr) {
+            console.error("[Mic] Failed to upload chunk:", chunkErr);
+          }
+        }
+
+        // If user clicked Stop (isRecordingRef is false), finalize meeting aggregation
+        if (!isRecordingRef.current && meetingIdRef.current) {
+          try {
+            console.log("[Mic] Finalizing live meeting recording:", meetingIdRef.current);
+            await fetch(`${API_BASE}/meetings/${meetingIdRef.current}/live/end`, {
+              method: "POST",
+              credentials: "include"
+            });
+            router.push(`/dashboard/meetings/${meetingIdRef.current}`);
+          } catch (endErr) {
+            console.error("[Mic] Failed to finalize live meeting:", endErr);
+          }
+        }
+
+        // Restart recording for next micro-batch if still active
+        if (isRecordingRef.current && streamRef.current && streamRef.current.active) {
+          mediaRecorder.start();
+        }
+      };
+
+      // Start initial recording
+      mediaRecorder.start();
+      setIsRecording(true);
+      setSeconds(0);
+
+      // Rotate chunks every 15 seconds to ensure self-contained file headers
+      rotationIntervalRef.current = setInterval(() => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+          mediaRecorderRef.current.stop();
+        }
+      }, 15000);
+
+      console.log("[Mic] Live recording loop initiated");
+    } catch (err) {
+      console.error("[Mic] Failed to initialize live recording:", err);
+      alert("Microphone permission denied or recording failed to start.");
+    }
+  };
+
+  const handleMicToggle = () => {
+    if (isRecording) {
+      isRecordingRef.current = false;
+      if (rotationIntervalRef.current) {
+        clearInterval(rotationIntervalRef.current);
+        rotationIntervalRef.current = null;
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+      setIsRecording(false);
+    } else {
+      startLiveRecording();
+    }
+  };
+
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isRecording) {
       interval = setInterval(() => {
         setSeconds((s) => s + 1);
       }, 1000);
-    } else if (!isRecording && seconds !== 0) {
-      // Don't reset seconds on pause
     }
     return () => clearInterval(interval);
-  }, [isRecording, seconds]);
+  }, [isRecording]);
 
   const formatTime = (totalSeconds: number) => {
     const h = Math.floor(totalSeconds / 3600).toString().padStart(2, "0");
@@ -97,9 +205,22 @@ export default function MeetingsPage() {
     return `${h}:${m}:${s}`;
   };
 
-  const handleStop = () => {
+  const handleStop = async () => {
+    isRecordingRef.current = false;
     setIsRecording(false);
     setSeconds(0);
+
+    if (rotationIntervalRef.current) {
+      clearInterval(rotationIntervalRef.current);
+      rotationIntervalRef.current = null;
+    }
+
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+    }
   };
 
   return (
@@ -193,7 +314,7 @@ export default function MeetingsPage() {
                 </span>
               </button>
               <button
-                onClick={() => setIsRecording(!isRecording)}
+                onClick={handleMicToggle}
                 className="w-20 h-20 primary-gradient rounded-full flex items-center justify-center text-white shadow-xl shadow-primary/30 hover:scale-105 transition-all group"
               >
                 <span
