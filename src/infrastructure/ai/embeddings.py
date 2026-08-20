@@ -1,17 +1,21 @@
 """
 app/intelligence/embeddings.py
 
-Singleton to load the Voyage AI embedding model.
+Singleton to load the Google GenAI embedding model.
 """
 
-from langchain_voyageai import VoyageAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # Load the model configuration
-shared_embedding_model = VoyageAIEmbeddings(
-    voyage_api_key=os.getenv("VOYAGE_API_KEY"),
-    model="voyage-3.5-lite"
+api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+if not api_key:
+    api_key = "placeholder_key"
+
+shared_embedding_model = GoogleGenerativeAIEmbeddings(
+    model=os.getenv("GEMINI_EMBEDDING_MODEL", "models/gemini-embedding-001"),
+    google_api_key=api_key
 )

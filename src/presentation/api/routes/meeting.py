@@ -33,23 +33,33 @@ def _assert_ownership(db: Session, meeting_id: str, user_id: int) -> None:
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
 
+from fastapi.responses import StreamingResponse
+from src.infrastructure.ai.highlights import extract_highlights_stream
+
 @router.post("/notes")
 @limiter.limit("5/minute")
 async def notes(request: Request, payload: NotesRequest, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     _assert_ownership(db, payload.meeting_id, user["user_id"])
     try:
-        result = await run_in_threadpool(generate_notes, payload.meeting_id)
-        
-        # Save highlight to database for metrics (if not already saved by Celery)
-        stmt = select(Meeting).where(Meeting.meeting_id == payload.meeting_id)
-        meeting = db.execute(stmt).scalar_one_or_none()
-        if meeting:
-            existing = db.execute(select(AIHighlight).where(AIHighlight.meeting_id == meeting.id)).scalar_one_or_none()
-            if not existing:
-                db.add(AIHighlight(meeting_id=meeting.id, content=result))
-                db.commit()
+        async def stream_generator():
+            full_notes = ""
+            async for chunk in extract_highlights_stream(payload.meeting_id):
+                full_notes += chunk
+                yield chunk
+            
+            # Save highlight to database for metrics (if not already saved by Celery)
+            try:
+                stmt = select(Meeting).where(Meeting.meeting_id == payload.meeting_id)
+                meeting = db.execute(stmt).scalar_one_or_none()
+                if meeting and full_notes:
+                    existing = db.execute(select(AIHighlight).where(AIHighlight.meeting_id == meeting.id)).scalar_one_or_none()
+                    if not existing:
+                        db.add(AIHighlight(meeting_id=meeting.id, content=full_notes))
+                        db.commit()
+            except Exception as db_err:
+                print(f"[DB Error] Failed to write highlight metrics: {db_err}")
 
-        return {"notes": result}
+        return StreamingResponse(stream_generator(), media_type="text/plain")
     except Exception:
         traceback.print_exc()
         raise HTTPException(500, "Notes generation failed")
@@ -89,16 +99,21 @@ async def chat_ws(websocket: WebSocket, meeting_id: str):
     # We must parse authentication manually via cookies or query param since Depends() is tricky in WS
     from src.application.security import decode_access_token
     token = websocket.cookies.get("access_token")
+    print(f"[WS Chat] Handshake check. Cookie token present: {bool(token)}")
     if not token:
+        print("[WS Chat] Authentication failed: Missing access_token cookie")
         await websocket.close(code=1008, reason="Missing authentication token")
         return
         
     try:
         payload = decode_access_token(token)
-        user_id = payload.get("user_id")
-        if not user_id:
-            raise ValueError()
-    except Exception:
+        user_id_str = payload.get("sub") or payload.get("user_id")
+        print(f"[WS Chat] Decoded token. User ID string: {user_id_str}")
+        if not user_id_str:
+            raise ValueError("Token missing user ID subject claim")
+        user_id = int(user_id_str)
+    except Exception as e:
+        print(f"[WS Chat] Authentication failed: Invalid token ({e})")
         await websocket.close(code=1008, reason="Invalid authentication token")
         return
 
@@ -107,11 +122,14 @@ async def chat_ws(websocket: WebSocket, meeting_id: str):
     is_generating = False
     try:
         if not meeting_belongs_to_user(db, meeting_id, user_id):
+            print(f"[WS Chat] Ownership check failed for user {user_id} and meeting {meeting_id}")
             await websocket.close(code=1008, reason="Meeting not found or access denied")
             return
             
+        print(f"[WS Chat] Connection fully established for meeting {meeting_id}")
         while True:
             data = await websocket.receive_text()
+            print(f"[WS Chat] Received raw message: {data}")
             
             if is_generating:
                 try:
@@ -129,6 +147,7 @@ async def chat_ws(websocket: WebSocket, meeting_id: str):
             if not question:
                 continue
 
+            print(f"[WS Chat] Processing question: {question}")
             is_generating = True
             
             try:
@@ -140,10 +159,12 @@ async def chat_ws(websocket: WebSocket, meeting_id: str):
 
                 # Stream the answer
                 full_answer = ""
+                print("[WS Chat] Querying Gemini and starting stream...")
                 async for chunk in ask_question_stream(question, meeting_id, user_id):
                     full_answer += chunk
                     await websocket.send_text(chunk)
                     
+                print(f"[WS Chat] Stream finished. Response length: {len(full_answer)}")
                 # Indicate end of stream
                 await websocket.send_text("[DONE]")
 
@@ -151,12 +172,17 @@ async def chat_ws(websocket: WebSocket, meeting_id: str):
                 if meeting and full_answer:
                     db.add(ChatMessage(meeting_id=meeting.id, role='ai', content=full_answer))
                     db.commit()
+            except Exception as stream_err:
+                print(f"[WS Chat] Streaming error: {stream_err}")
+                traceback.print_exc()
+                await websocket.send_text(f"[ERROR] {str(stream_err)}")
             finally:
                 is_generating = False
 
     except WebSocketDisconnect:
-        print(f"WebSocket disconnected for meeting {meeting_id}")
+        print(f"[WS Chat] WebSocket disconnected for meeting {meeting_id}")
     except Exception as e:
+        print(f"[WS Chat] WebSocket loop error: {e}")
         traceback.print_exc()
         try:
             await websocket.send_text(f"[ERROR] {str(e)}")

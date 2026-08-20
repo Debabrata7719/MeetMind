@@ -29,16 +29,18 @@ def embed_store(chunks: list[str], meeting_id: str):
 
     metadatas = [{"meeting_id": meeting_id} for _ in chunks]
 
+    collection_name = os.getenv("QDRANT_COLLECTION_NAME", "meetings")
+
     QdrantVectorStore.from_texts(
         chunks,
         shared_embedding_model,
         url=qdrant_url,
         api_key=qdrant_api_key,
-        collection_name="meetings",
+        collection_name=collection_name,
         metadatas=metadatas,
-        force_recreate=False  # Append to existing "meetings" collection
+        force_recreate=False  # Append to existing collection
     )
 
-    print(f"[OK] Stored embeddings in Qdrant collection 'meetings'")
+    print(f"[OK] Stored embeddings in Qdrant collection '{collection_name}'")
 
-    return "meetings"
+    return collection_name

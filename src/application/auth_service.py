@@ -56,7 +56,15 @@ def update_meeting_name(db: Session, meeting_id: str, user_id: int, name: str) -
 def get_user_meetings(db: Session, user_id: int) -> list[dict]:
     stmt = select(Meeting).where(Meeting.user_id == user_id).order_by(Meeting.created_at.desc())
     meetings = db.execute(stmt).scalars().all()
-    return [{"id": m.meeting_id, "name": m.name} for m in meetings]
+    return [
+        {
+            "id": m.meeting_id,
+            "name": m.name,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+            "duration": m.duration
+        }
+        for m in meetings
+    ]
 
 
 def meeting_belongs_to_user(db: Session, meeting_id: str, user_id: int) -> bool:

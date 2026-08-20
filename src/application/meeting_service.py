@@ -130,9 +130,9 @@ def delete_meeting_data(meeting_id: str, user_id: int):
     if qdrant_url and qdrant_api_key:
         try:
             client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
-            # Delete points matching the meeting_id
+            collection_name = os.getenv("QDRANT_COLLECTION_NAME", "meetings")
             client.delete(
-                collection_name="meetings",
+                collection_name=collection_name,
                 points_selector=Filter(
                     must=[
                         FieldCondition(

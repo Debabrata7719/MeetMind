@@ -1,8 +1,11 @@
 from src.infrastructure.workers.celery_app import celery_app
 import os
 import time
+from datetime import datetime
+import redis
 from pathlib import Path
 from src.infrastructure.cache.redis_client import redis_client
+
 
 @celery_app.task
 def cleanup_stale_uploads():

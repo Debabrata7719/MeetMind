@@ -40,11 +40,15 @@ from src.infrastructure.ai.embeddings import shared_embedding_model as embedding
 # ===============================
 # LLM (load once)
 # ===============================
-from langchain_groq import ChatGroq
-llm = ChatGroq(
-    model_name="llama-3.3-70b-versatile",
-    temperature=0.3,
-    request_timeout=30
+api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+if not api_key:
+    api_key = "placeholder_key"
+
+from langchain_google_genai import ChatGoogleGenerativeAI
+llm = ChatGoogleGenerativeAI(
+    model=os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash"),
+    google_api_key=api_key,
+    temperature=0.3
 )
 
 
@@ -113,9 +117,32 @@ def _get_retriever(meeting_id: str):
     # The collection is "meetings", we filter by meeting_id metadata
     
     # We create the vector store with a metadata filter
+    collection_name = os.getenv("QDRANT_COLLECTION_NAME", "meetings")
+    try:
+        client.get_collection(collection_name=collection_name)
+    except Exception:
+        dummy_vector = embedding.embed_query("dummy text")
+        client.create_collection(
+            collection_name=collection_name,
+            vectors_config=rest_models.VectorParams(
+                size=len(dummy_vector),
+                distance=rest_models.Distance.COSINE
+            )
+        )
+    
+    # Ensure payload index on metadata.meeting_id is present
+    try:
+        client.create_payload_index(
+            collection_name=collection_name,
+            field_name="metadata.meeting_id",
+            field_schema="keyword"
+        )
+    except Exception:
+        pass
+
     qdrant = QdrantVectorStore(
         client=client,
-        collection_name="meetings",
+        collection_name=collection_name,
         embedding=embedding
     )
 
@@ -251,53 +278,59 @@ async def ask_question_stream(query: str, meeting_id: str, user_id: int):
     session_id = f"chat:{user_id}:{meeting_id}"
     chat_history = RedisChatMessageHistory(session_id=session_id, url=REDIS_URL)
 
-    memory = ConversationBufferWindowMemory(
-        k=5,
-        memory_key="chat_history",
-        return_messages=True,
-        chat_memory=chat_history,
+    # Retrieve relevant documents
+    try:
+        docs = retriever.invoke(query_clean)
+        context_text = "\n\n".join([d.page_content for d in docs])
+    except Exception as e:
+        print(f"[Retrieval Error] {e}")
+        context_text = "No context found."
+
+    # Format chat history from Redis history (mimicking ConversationBufferWindowMemory)
+    chat_history_str = ""
+    for msg in chat_history.messages[-5:]:
+        role = "User" if msg.type == "human" else "AI"
+        chat_history_str += f"{role}: {msg.content}\n"
+
+    # Build input prompt
+    formatted_prompt = prompt.format(
+        context=context_text,
+        question=query_clean,
+        chat_history=chat_history_str
     )
 
-    callback = AsyncIteratorCallbackHandler()
-    
-    streaming_llm = ChatGroq(
-        model_name="llama-3.3-70b-versatile",
+    streaming_llm = ChatGoogleGenerativeAI(
+        model=os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash"),
+        google_api_key=api_key,
         temperature=0.3,
-        request_timeout=30,
-        streaming=True,
-        callbacks=[callback]
-    )
-    non_streaming_llm = ChatGroq(
-        model_name="llama-3.3-70b-versatile",
-        temperature=0.3,
-        request_timeout=30,
+        streaming=True
     )
 
-    chain = ConversationalRetrievalChain.from_llm(
-        llm=streaming_llm,
-        condense_question_llm=non_streaming_llm,
-        retriever=retriever,
-        memory=memory,
-        combine_docs_chain_kwargs={"prompt": prompt}
-    )
-
-    task = asyncio.create_task(
-        chain.ainvoke({"question": query_clean, "chat_history": chat_history})
-    )
+    def extract_text_content(content) -> str:
+        if isinstance(content, str):
+            return content
+        elif isinstance(content, list):
+            return "".join(extract_text_content(item) for item in content)
+        elif isinstance(content, dict):
+            if "text" in content:
+                return str(content["text"])
+            return ""
+        return str(content)
 
     full_answer = ""
     try:
-        async for token in callback.aiter():
-            full_answer += token
-            yield token
+        async for chunk in streaming_llm.astream(formatted_prompt):
+            token = extract_text_content(chunk.content)
+            if token:
+                full_answer += token
+                yield token
     except Exception as e:
         print(f"[WebSocket Error] {e}")
-
-    await task
+        yield f"[ERROR] Streaming failed: {e}"
+        return
 
     # Apply extra safety filter
     if "don't know" in full_answer.lower() or "don't have enough" in full_answer.lower() or "do not have enough" in full_answer.lower() or not full_answer:
         full_answer = "Not found in the meeting transcript"
-        # We might have yielded the wrong text to the user already, but we can cache the safety response.
 
     redis_client.set(cache_key, full_answer.strip(), ex=3600)
