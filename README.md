@@ -94,9 +94,9 @@ flowchart TB
     %% ─────────────────────────────────────────────────────────────
     subgraph AILayer["🤖 AI & Intelligence Layer"]
         AssemblyAI["AssemblyAI (Audio/Video Transcription)"]:::ai
-        VoyageAI["VoyageAI (voyage-3.5-lite Embeddings)"]:::ai
-        GroqChat["Groq (Llama-3.3-70B Chat Stream)"]:::ai
-        GroqHighlights["Groq (Llama-3.3-70B Highlights Extractor)"]:::ai
+        HuggingFace["HuggingFace (all-MiniLM-L6-v2 Embeddings)"]:::ai
+        GroqChat["Groq (Dynamic Chat Stream)"]:::ai
+        GroqHighlights["Groq (Dynamic Highlights Extractor)"]:::ai
     end
 
     %% ─────────────────────────────────────────────────────────────
@@ -153,7 +153,7 @@ flowchart TB
     CeleryWorker -->|1. Fetch & Transcribe| AssemblyAI
     AssemblyAI -.->|Read Direct Stream| CloudinaryStore
     CeleryWorker -->|2. Chunk Transcript| TextChunker
-    CeleryWorker -->|3. Generate Embeddings| VoyageAI
+    CeleryWorker -->|3. Generate Embeddings| HuggingFace
     CeleryWorker -->|4. Upsert Vectors| QdrantDB
     CeleryWorker -->|5. Extract Highlights| GroqHighlights
     CeleryWorker -->|6. Save Duration & Highlights| PostgresDB
@@ -244,9 +244,9 @@ sequenceDiagram
         API-->>User: WS Frame: { stage: "embedding", progress: 60% }
 
         Worker->>Worker: LangChain RecursiveCharacterTextSplitter (chunk_size=1000, overlap=200)
-        Worker->>Voyage: Embed text chunks via voyage-3.5-lite
-        Voyage-->>Worker: Return 1024-dim dense vector embeddings
-        Worker->>Qdrant: Upsert points with payload { meeting_id: uuid } to collection "meetings"
+        Worker->>HuggingFace: Embed text chunks via sentence-transformers/all-MiniLM-L6-v2
+        HuggingFace-->>Worker: Return 384-dim dense vector embeddings
+        Worker->>Qdrant: Upsert points with payload { meeting_id: uuid } to collection "meetings_huggingface"
         
         Worker->>Groq: Generate precomputed meeting highlights
         Groq-->>Worker: Return bulleted action items & decisions
@@ -290,8 +290,8 @@ sequenceDiagram
         
         alt Cache Miss
             API->>Redis: Retrieve conversation buffer history (RedisChatMessageHistory, k=5)
-            API->>Voyage: Embed user question
-            Voyage-->>API: Question embedding vector
+            API->>HuggingFace: Embed user question
+            HuggingFace-->>API: Question embedding vector
             API->>Qdrant: Similarity search (k=7, filter: meeting_id=uuid)
             Qdrant-->>API: Return top matching context chunks
             API->>Groq: Stream prompt (Strict context + Chat history + Question) to Llama-3.3-70B
@@ -334,9 +334,9 @@ sequenceDiagram
 | **Direct-to-Cloud Upload** | Cloudinary HMAC signatures (`GET /upload/signature`) | Bypasses backend memory limits; supports 100GB+ video files with 0 server memory pressure. |
 | **Zero Storage Bloat** | Instant post-processing destruction | Videos are wiped from Cloudinary immediately after vector extraction to ensure 0% storage waste. |
 | **Ultra-Fast Transcription** | AssemblyAI Native Cloud Ingestion | Directly transcribes from secure streaming URLs without downloading files locally. |
-| **High-Density Vector Search** | VoyageAI (`voyage-3.5-lite`) + Qdrant Cloud | Dense 1024-dimensional semantic embeddings stored with indexed metadata filters (`meeting_id`). |
+| **High-Density Vector Search** | HuggingFace (`all-MiniLM-L6-v2`) + Qdrant Cloud | Dense 384-dimensional semantic embeddings stored with indexed metadata filters (`meeting_id`). |
 | **Conversational RAG** | LangChain + RedisChatMessageHistory | Multi-turn contextual memory with a sliding window buffer (`k=5`) per user and meeting. |
-| **Real-time Token Streaming** | WebSockets + Groq Llama-3.3-70B | Sub-second token delivery directly through `/ws/chat/{meeting_id}` with DDoS concurrency locks. |
+| **Real-time Token Streaming** | WebSockets + Groq LLM | Sub-second token delivery directly through `/ws/chat/{meeting_id}` with DDoS concurrency locks. |
 | **Asynchronous Pipeline** | Celery + Upstash Redis | Resilient background processing with automatic retry mechanisms (3x retries with exponential backoff). |
 | **Isolated Webhook Dispatch** | Celery Sub-tasks + HMAC-SHA256 | Independent execution per webhook endpoint so failing webhooks do not block healthy integrations. |
 | **Multi-Tier Caching** | Upstash Redis | Semantic Q&A caching, route response caching (`@cache_response`), and active job status hashes. |
@@ -425,8 +425,8 @@ MeetMind/
 | **Background Tasks** | [Celery](https://docs.celeryq.dev/) + [Celery Beat](https://docs.celeryq.dev/en/stable/userguide/periodic-tasks.html) | Distributed task queue and periodic cron maintenance jobs |
 | **File Storage** | [Cloudinary](https://cloudinary.com/) | Direct client-to-cloud signed uploads bypassing backend limits |
 | **Audio Transcription** | [AssemblyAI](https://www.assemblyai.com/) | Cloud speech-to-text API supporting streaming URL ingestion |
-| **Text Embeddings** | [VoyageAI](https://www.voyageai.com/) (`voyage-3.5-lite`) | State-of-the-art dense semantic text representations |
-| **LLM Reasoning** | [Groq](https://groq.com/) (`llama-3.3-70b-versatile`) | Ultra-low latency LLM for RAG chat and highlight extraction |
+| **Text Embeddings** | [HuggingFace](https://huggingface.co/) (`all-MiniLM-L6-v2`) | Local dense semantic text representations (384-dimensional) |
+| **LLM Reasoning** | [Groq](https://groq.com/) (Dynamic models via `.env`) | Ultra-low latency LLM for RAG chat and highlight extraction |
 | **RAG Framework** | [LangChain](https://www.langchain.com/) | Document chunking, vector retrieval, and conversational chains |
 | **Document Export** | [ReportLab](https://www.reportlab.com/) + [python-docx](https://python-docx.readthedocs.io/) | PDF and DOCX automated report generation |
 | **Rate Limiting** | [SlowAPI](https://slowapi.readthedocs.io/) | IP-based request throttling against brute force and DDoS |
