@@ -22,7 +22,7 @@ load_dotenv()
 is_prod = os.getenv("ENV") == "production"
 
 app = FastAPI(
-    title="Meeting Intelligence System",
+    title="MeetMind",
     docs_url=None if is_prod else "/docs",
     redoc_url=None if is_prod else "/redoc",
     openapi_url=None if is_prod else "/openapi.json"
@@ -45,9 +45,12 @@ async def on_startup():
     if not os.getenv("GROQ_API_KEY"):
         raise RuntimeError("FATAL: GROQ_API_KEY is missing from environment variables.")
         
-    jwt_secret = os.getenv("JWT_SECRET_KEY", "changeme")
-    if is_prod and jwt_secret == "changeme":
-        raise RuntimeError("FATAL: JWT_SECRET_KEY is still set to 'changeme' in production!")
+    jwt_secret = os.getenv("JWT_SECRET_KEY")
+    env = os.getenv("ENV", "development").lower()
+    if not jwt_secret:
+        raise RuntimeError("FATAL: JWT_SECRET_KEY is missing from environment variables.")
+    if env not in ["development", "local"] and jwt_secret == "changeme":
+        raise RuntimeError("FATAL: JWT_SECRET_KEY cannot be set to 'changeme' in production/staging environments!")
 
     # 2. Ping MySQL Database
     try:
