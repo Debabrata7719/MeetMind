@@ -75,6 +75,7 @@ export default function MeetingWorkspacePage() {
       }
     } catch (err) {
       console.error(err);
+      setHighlights("We had trouble compiling the AI intelligence report for this meeting. Please check your connection and try clicking 'Get Highlights' again.");
     } finally {
       setIsGeneratingNotes(false);
     }
@@ -85,6 +86,7 @@ export default function MeetingWorkspacePage() {
   const [chatInput, setChatInput] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatWsRef = useRef<WebSocket | null>(null);
 
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,12 +100,12 @@ export default function MeetingWorkspacePage() {
     try {
       const wsUrl = API_BASE.replace(/^http/, 'ws') + `/ws/chat/${meetingId}`;
       const ws = new WebSocket(wsUrl);
+      chatWsRef.current = ws;
 
       ws.onopen = () => {
         ws.send(JSON.stringify({ question: userMsg }));
         // Add a placeholder assistant message
         setMessages(prev => [...prev, { role: "assistant", content: "" }]);
-        setIsChatLoading(false); // Stop loading animation since streaming started
       };
 
       ws.onmessage = (event) => {
@@ -112,6 +114,14 @@ export default function MeetingWorkspacePage() {
           ws.close();
         } else if (chunk.startsWith("[ERROR]")) {
           console.error(chunk);
+          setMessages(prev => {
+            const newMsgs = [...prev];
+            const last = newMsgs[newMsgs.length - 1];
+            if (last && last.role === "assistant") {
+              newMsgs[newMsgs.length - 1] = { role: "assistant", content: "Sorry, I ran into a system error processing your request. Please try asking again." };
+            }
+            return newMsgs;
+          });
           ws.close();
         } else {
           setMessages(prev => {
@@ -128,18 +138,45 @@ export default function MeetingWorkspacePage() {
 
       ws.onerror = (err) => {
         console.error("WebSocket error:", err);
+        setMessages(prev => {
+          const newMsgs = [...prev];
+          const last = newMsgs[newMsgs.length - 1];
+          if (last && last.role === "assistant") {
+            newMsgs[newMsgs.length - 1] = { role: "assistant", content: "We couldn't connect to the AI chat service. Please check your internet connection." };
+          }
+          return newMsgs;
+        });
         setIsChatLoading(false);
         ws.close();
       };
       
       ws.onclose = () => {
         setIsChatLoading(false);
+        chatWsRef.current = null;
       };
     } catch (err) {
       console.error(err);
+      setMessages(prev => {
+        const newMsgs = [...prev];
+        const last = newMsgs[newMsgs.length - 1];
+        if (last && last.role === "assistant") {
+          newMsgs[newMsgs.length - 1] = { role: "assistant", content: "Failed to open a connection to the chat server. Please try again." };
+        }
+        return newMsgs;
+      });
       setIsChatLoading(false);
+      chatWsRef.current = null;
     }
   };
+
+  useEffect(() => {
+    return () => {
+      if (chatWsRef.current) {
+        chatWsRef.current.close();
+        chatWsRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -147,22 +184,96 @@ export default function MeetingWorkspacePage() {
 
   const isProcessing = jobStatus && jobStatus.status !== "done" && jobStatus.status !== "failed";
 
+  const parseBold = (text: string) => {
+    const parts = text.split(/\*\*(.*?)\*\*/g);
+    return parts.map((part, index) => {
+      if (index % 2 === 1) {
+        return <strong key={index} className="font-bold text-on-surface">{part}</strong>;
+      }
+      return part;
+    });
+  };
+
+  const renderMarkdown = (text: string) => {
+    if (!text) return null;
+    const lines = text.split("\n");
+    let inList = false;
+    const elements: React.ReactNode[] = [];
+
+    lines.forEach((line, i) => {
+      const cleanLine = line.trim();
+      if (!cleanLine) {
+        if (inList) {
+          inList = false;
+        }
+        return;
+      }
+
+      // Check header
+      if (cleanLine.startsWith("### ")) {
+        if (inList) inList = false;
+        elements.push(<h3 key={i} className="text-lg font-bold mt-4 mb-2 text-on-surface">{cleanLine.substring(4)}</h3>);
+      } else if (cleanLine.startsWith("## ")) {
+        if (inList) inList = false;
+        elements.push(<h2 key={i} className="text-xl font-bold mt-5 mb-2 border-b border-outline-variant/30 pb-1 text-on-surface">{cleanLine.substring(3)}</h2>);
+      } else if (cleanLine.startsWith("# ")) {
+        if (inList) inList = false;
+        elements.push(<h1 key={i} className="text-2xl font-bold mt-6 mb-3 text-on-surface">{cleanLine.substring(2)}</h1>);
+      } else if (cleanLine.startsWith("- ") || cleanLine.startsWith("* ")) {
+        const itemContent = cleanLine.substring(2);
+        const parsed = parseBold(itemContent);
+        elements.push(
+          <li key={i} className="ml-5 list-disc text-on-surface-variant mb-1.5 leading-relaxed">
+            {parsed}
+          </li>
+        );
+      } else {
+        if (inList) inList = false;
+        const parsed = parseBold(cleanLine);
+        elements.push(<p key={i} className="text-on-surface-variant mb-3 leading-relaxed">{parsed}</p>);
+      }
+    });
+
+    return <div className="prose max-w-none">{elements}</div>;
+  };
+
   return (
     <div className="flex flex-col h-[calc(100vh-64px)] -m-10 relative">
       {/* Loading Overlay */}
       {isProcessing && (
         <div className="absolute inset-0 z-50 bg-surface/80 backdrop-blur-sm flex items-center justify-center">
           <div className="bg-white p-8 rounded-2xl shadow-lg border border-outline-variant/30 text-center max-w-md w-full">
-            <span className="material-symbols-outlined text-primary text-5xl animate-spin mb-4">sync</span>
+            {/* SVG Circular Progress Bar from 0 to 100 */}
+            <div className="relative w-28 h-28 mx-auto mb-6 flex items-center justify-center">
+              <svg className="w-full h-full transform -rotate-90">
+                {/* Background circle */}
+                <circle
+                  cx="56"
+                  cy="56"
+                  r="48"
+                  strokeWidth="8"
+                  fill="transparent"
+                  style={{ stroke: 'var(--color-surface-container)' }}
+                />
+                {/* Foreground circle */}
+                <circle
+                  cx="56"
+                  cy="56"
+                  r="48"
+                  strokeWidth="8"
+                  fill="transparent"
+                  strokeDasharray={2 * Math.PI * 48}
+                  strokeDashoffset={2 * Math.PI * 48 * (1 - (jobStatus?.progress || 0) / 100)}
+                  strokeLinecap="round"
+                  style={{ stroke: 'var(--color-primary)', transition: 'stroke-dashoffset 0.5s ease-out' }}
+                />
+              </svg>
+              <span className="absolute text-xl font-bold text-on-surface">
+                {jobStatus?.progress || 0}%
+              </span>
+            </div>
             <h3 className="font-headline-sm text-headline-sm text-on-surface mb-2">Analyzing Meeting</h3>
             <p className="text-on-surface-variant text-label-md mb-6">{jobStatus.message || "Processing media file..."}</p>
-            <div className="w-full bg-surface-variant rounded-full h-2 mb-2 overflow-hidden">
-              <div
-                className="bg-primary h-2 rounded-full transition-all duration-500 ease-out"
-                style={{ width: `${jobStatus.progress || 0}%` }}
-              ></div>
-            </div>
-            <p className="text-xs text-outline font-bold text-right">{jobStatus.progress || 0}%</p>
           </div>
         </div>
       )}
@@ -279,9 +390,34 @@ export default function MeetingWorkspacePage() {
                 </div>
               )}
               {highlights && (
-                <section className="bg-white p-8 rounded-[24px] shadow-sm border border-outline-variant/20 whitespace-pre-wrap">
-                  {highlights}
-                </section>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center bg-white px-6 py-4 rounded-2xl border border-outline-variant/20 shadow-sm">
+                    <span className="font-bold text-sm text-on-surface flex items-center gap-2">
+                      <span className="material-symbols-outlined text-primary text-lg">auto_awesome</span>
+                      AI Intelligence Report
+                    </span>
+                    <button
+                      onClick={() => {
+                        const blob = new Blob([highlights], { type: "text/markdown" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `meeting-${params.id}-highlights.md`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                      }}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-xs font-bold transition-all duration-200 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-sm">download</span>
+                      Download Markdown
+                    </button>
+                  </div>
+                  <section className="bg-white p-8 rounded-[24px] shadow-sm border border-outline-variant/20">
+                    {renderMarkdown(highlights)}
+                  </section>
+                </div>
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Key Decisions */}

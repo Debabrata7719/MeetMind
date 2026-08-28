@@ -152,7 +152,7 @@ export default function AboutUs() {
             </div>
             <div>
               <h3 className="font-headline-sm text-headline-sm text-on-background mb-2">
-                Luminous Intelligence
+                MeetMind Intelligence
               </h3>
               <p className="font-body-md text-body-md text-on-surface-variant">
                 Our AI doesn't just transcribe; it understands. We strive for

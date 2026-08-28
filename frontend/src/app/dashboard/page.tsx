@@ -145,7 +145,7 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-center gap-1 text-xs text-primary font-bold">
             <span className="material-symbols-outlined text-sm">verified</span>
-            <span>Powered by Luminous AI</span>
+            <span>Powered by MeetMind AI</span>
           </div>
         </div>
         {/* Stat 4 */}
@@ -163,7 +163,7 @@ export default function DashboardPage() {
               Questions Asked
             </p>
             <h3 className="font-display-lg-mobile text-display-lg-mobile font-bold text-on-background">
-              0
+              {metrics.questions_asked}
             </h3>
           </div>
           <div className="flex items-center gap-1 text-xs text-on-surface-variant">
@@ -184,47 +184,58 @@ export default function DashboardPage() {
             <span className="material-symbols-outlined">arrow_forward</span>
           </Link>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        <div className="relative border-l-2 border-outline-variant/30 ml-4 pl-8 space-y-8 py-4">
           {meetings.length === 0 ? (
-            <p className="text-on-surface-variant col-span-full">
+            <p className="text-on-surface-variant">
               No meetings found. Start by uploading a recording!
             </p>
           ) : (
             meetings.map((meeting: any) => (
               <div
-                key={meeting.meeting_id}
-                className="bg-white p-6 rounded-[24px] custom-shadow border border-surface-container flex flex-col gap-6 group hover:border-primary/20 transition-all"
+                key={meeting.id}
+                className="relative bg-white p-6 rounded-[24px] shadow-sm border border-outline-variant/20 hover:border-primary/40 hover:shadow-lg transition-all group flex flex-col md:flex-row md:items-center justify-between gap-6"
               >
-                <div className="flex justify-between items-start">
-                  <div className="p-3 rounded-lg bg-surface-container-low group-hover:bg-primary-container/10 transition-colors">
-                    <span className="material-symbols-outlined text-primary">
-                      groups
-                    </span>
+                {/* Timeline dot */}
+                <div className="absolute -left-[41px] top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-surface border-4 border-primary flex items-center justify-center z-10">
+                  <div className="w-1.5 h-1.5 rounded-full bg-white"></div>
+                </div>
+
+                <div className="flex items-center gap-4 flex-1">
+                  <div className="p-3.5 rounded-2xl bg-primary/10 text-primary group-hover:scale-110 transition-transform">
+                    <span className="material-symbols-outlined text-2xl">groups</span>
                   </div>
-                  <span className="px-2 py-1 rounded bg-green-100 text-green-700 font-label-sm text-label-sm flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-600"></span>
+                  <div>
+                    <h4 className="font-bold text-lg text-on-background group-hover:text-primary transition-colors">
+                      {meeting.name || "Untitled Meeting"}
+                    </h4>
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-on-surface-variant font-medium mt-1">
+                      <span className="flex items-center gap-1">
+                        <span className="material-symbols-outlined text-sm">calendar_month</span>
+                        {meeting.created_at ? new Date(meeting.created_at).toLocaleDateString() : ""}
+                      </span>
+                      {meeting.duration > 0 && (
+                        <span className="flex items-center gap-1">
+                          <span className="material-symbols-outlined text-sm">schedule</span>
+                          {Math.floor(meeting.duration / 3600)}h {Math.floor((meeting.duration % 3600) / 60)}m
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4 justify-between md:justify-end">
+                  <span className="px-2.5 py-1 rounded-full bg-green-500/10 text-green-600 dark:text-green-400 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1 border border-green-500/20">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
                     Processed
                   </span>
+                  
+                  <Link href={`/dashboard/meetings/${meeting.id}`}>
+                    <button className="px-5 py-3 bg-surface-container-low hover:bg-primary hover:text-white rounded-xl font-bold text-sm transition-all duration-200 flex items-center gap-2 cursor-pointer">
+                      Open Workspace
+                      <span className="material-symbols-outlined text-sm">open_in_new</span>
+                    </button>
+                  </Link>
                 </div>
-                <div>
-                  <h4 className="font-headline-sm text-headline-sm text-on-background mb-1 truncate">
-                    {meeting.name || "Untitled Meeting"}
-                  </h4>
-                  <p className="text-on-surface-variant text-label-md">
-                    {new Date(meeting.created_at).toLocaleDateString()}
-                  </p>
-                </div>
-                <div className="flex items-center -space-x-2">
-                  <div className="w-8 h-8 rounded-full bg-surface-container-high border-2 border-white flex items-center justify-center text-[10px] font-bold text-on-surface-variant">
-                    +AI
-                  </div>
-                </div>
-                <button className="w-full py-3 bg-surface-container-low hover:bg-primary hover:text-white rounded-xl font-bold transition-all duration-200 flex items-center justify-center gap-2">
-                  Open Transcript
-                  <span className="material-symbols-outlined text-sm">
-                    open_in_new
-                  </span>
-                </button>
               </div>
             ))
           )}

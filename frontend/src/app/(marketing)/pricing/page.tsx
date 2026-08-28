@@ -17,7 +17,7 @@ export default function Pricing() {
               Intelligence in three simple steps
             </h2>
             <p className="font-body-lg text-body-lg text-on-surface-variant max-w-2xl mx-auto mt-4">
-              Luminous works in the background, allowing you to focus on the
+              MeetMind works in the background, allowing you to focus on the
               conversation while we handle the cognitive heavy lifting.
             </p>
           </div>
@@ -63,7 +63,7 @@ export default function Pricing() {
                 2. Analyze
               </h3>
               <p className="font-body-md text-body-md text-on-surface-variant leading-relaxed">
-                Our proprietary Luminous engine parses unstructured dialogue,
+                Our proprietary MeetMind engine parses unstructured dialogue,
                 identifying key decisions, speakers, and emotional context in
                 real-time.
               </p>
@@ -217,7 +217,7 @@ export default function Pricing() {
                 Ready to upgrade your meetings?
               </h2>
               <p className="font-body-lg text-body-lg text-surface-variant/80 mb-10">
-                Join 5,000+ high-performance teams using Luminous Intelligence
+                Join 5,000+ high-performance teams using MeetMind
                 to reclaim their focus and drive results.
               </p>
               <div className="flex flex-col sm:flex-row gap-4 justify-center">

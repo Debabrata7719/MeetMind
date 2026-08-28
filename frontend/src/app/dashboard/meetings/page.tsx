@@ -66,6 +66,15 @@ export default function MeetingsPage() {
       }
 
       const data = await res.json();
+      try {
+        const processing = JSON.parse(localStorage.getItem("processing_meetings") || "[]");
+        if (!processing.includes(data.meeting_id)) {
+          processing.push(data.meeting_id);
+          localStorage.setItem("processing_meetings", JSON.stringify(processing));
+        }
+      } catch (storageErr) {
+        console.error("Failed to write to localStorage:", storageErr);
+      }
       router.push(`/dashboard/meetings/${data.meeting_id}`);
     } catch (err) {
       console.error(err);
@@ -182,6 +191,9 @@ export default function MeetingsPage() {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
       }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
       setIsRecording(false);
     } else {
       startLiveRecording();
@@ -197,6 +209,33 @@ export default function MeetingsPage() {
     }
     return () => clearInterval(interval);
   }, [isRecording]);
+
+  useEffect(() => {
+    return () => {
+      isRecordingRef.current = false;
+      if (rotationIntervalRef.current) {
+        clearInterval(rotationIntervalRef.current);
+        rotationIntervalRef.current = null;
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch (e) {
+          console.error("Failed to stop media recorder on unmount", e);
+        }
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => {
+          try {
+            track.stop();
+          } catch (e) {
+            console.error("Failed to stop track on unmount", e);
+          }
+        });
+        streamRef.current = null;
+      }
+    };
+  }, []);
 
   const formatTime = (totalSeconds: number) => {
     const h = Math.floor(totalSeconds / 3600).toString().padStart(2, "0");
@@ -285,19 +324,40 @@ export default function MeetingsPage() {
             </div>
           </div>
           <div className="space-y-8">
-            {/* Animated Waveform */}
-            <div className="flex items-center justify-center gap-1 h-12 overflow-hidden">
-              {[...Array(40)].map((_, i) => (
-                <div
-                  key={i}
-                  className={`w-1 rounded-full transition-all duration-300 ${
-                    isRecording
-                      ? "bg-primary animate-[waveform-bounce_1.2s_ease-in-out_infinite]"
-                      : "bg-primary-container opacity-30 h-2"
-                  }`}
-                  style={{ animationDelay: `${i * 0.05}s` }}
-                ></div>
-              ))}
+            {/* SVG Waveform Visualizer */}
+            <div className="h-16 flex items-center justify-center relative overflow-hidden bg-surface-container-low/20 rounded-2xl border border-outline-variant/10">
+              {isRecording ? (
+                <svg className="w-full h-full" viewBox="0 0 400 60" preserveAspectRatio="none">
+                  <path
+                    d="M 0 30 Q 25 5, 50 30 T 100 30 T 150 30 T 200 30 T 250 30 T 300 30 T 350 30 T 400 30"
+                    fill="none"
+                    strokeWidth="3"
+                    strokeDasharray="20 10"
+                    style={{
+                      stroke: 'var(--color-primary)',
+                      filter: 'drop-shadow(0 0 6px var(--color-primary))',
+                      animation: 'wave-flow 3s linear infinite'
+                    }}
+                  />
+                  <path
+                    d="M 0 30 Q 25 55, 50 30 T 100 30 T 150 30 T 200 30 T 250 30 T 300 30 T 350 30 T 400 30"
+                    fill="none"
+                    strokeWidth="1.5"
+                    strokeDasharray="15 15"
+                    style={{
+                      stroke: 'var(--color-tertiary)',
+                      opacity: 0.6,
+                      animation: 'wave-flow 4s linear infinite reverse'
+                    }}
+                  />
+                </svg>
+              ) : (
+                <div className="flex gap-1.5 items-center">
+                  {[...Array(32)].map((_, i) => (
+                    <div key={i} className="w-1 h-3 bg-outline-variant/30 rounded-full"></div>
+                  ))}
+                </div>
+              )}
             </div>
             {/* Controls */}
             <div className="flex items-center justify-center gap-6">
@@ -321,18 +381,7 @@ export default function MeetingsPage() {
                   className="material-symbols-outlined text-4xl"
                   style={{ fontVariationSettings: "'FILL' 1" }}
                 >
-                  {isRecording ? "pause" : "mic"}
-                </span>
-              </button>
-              <button
-                disabled={seconds === 0}
-                className="w-14 h-14 flex items-center justify-center rounded-full border border-outline-variant text-on-surface-variant hover:bg-surface-variant transition-all disabled:opacity-30"
-              >
-                <span
-                  className="material-symbols-outlined text-2xl"
-                  style={{ fontVariationSettings: "'FILL' 1" }}
-                >
-                  pause
+                  {isRecording ? "stop" : "mic"}
                 </span>
               </button>
             </div>

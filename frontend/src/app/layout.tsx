@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Luminous Intelligence | Premium AI Meeting Advantage",
+  title: "MeetMind | Premium AI Meeting Advantage",
   description: "Turn every meeting into a competitive advantage.",
 };
 
