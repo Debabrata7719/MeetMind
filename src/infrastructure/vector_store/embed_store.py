@@ -27,6 +27,11 @@ def embed_store(chunks: list[str], meeting_id: str):
     # Actually Qdrant requires creating the collection first if it doesn't exist, 
     # but QdrantVectorStore.from_texts handles that.
 
+    import uuid
+    ids = [
+        str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{meeting_id}_{i}"))
+        for i in range(len(chunks))
+    ]
     metadatas = [{"meeting_id": meeting_id} for _ in chunks]
 
     collection_name = os.getenv("QDRANT_COLLECTION_NAME", "meetings")
@@ -38,6 +43,7 @@ def embed_store(chunks: list[str], meeting_id: str):
         api_key=qdrant_api_key,
         collection_name=collection_name,
         metadatas=metadatas,
+        ids=ids,
         force_recreate=False  # Append to existing collection
     )
 

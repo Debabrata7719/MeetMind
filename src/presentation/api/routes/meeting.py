@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from src.application.meeting_service import generate_notes, ask_question, delete_meeting_data
 from src.presentation.api.models import ChatRequest, NotesRequest, MeetingName
 from src.presentation.dependencies import get_current_user
-from src.infrastructure.database import get_db
+from src.infrastructure.database import get_db, SessionLocal
 from src.application.auth_service import get_user_meetings, update_meeting_name, meeting_belongs_to_user, delete_meeting_from_db
 from src.infrastructure.ai.chat import ask_question_stream
 from src.infrastructure.cache.cache import cache_response, invalidate_user_cache
@@ -48,16 +48,23 @@ async def notes(request: Request, payload: NotesRequest, user: dict = Depends(ge
                 yield chunk
             
             # Save highlight to database for metrics (if not already saved by Celery)
+            from src.infrastructure.database import SessionLocal
+            local_db = SessionLocal()
             try:
                 stmt = select(Meeting).where(Meeting.meeting_id == payload.meeting_id)
-                meeting = db.execute(stmt).scalar_one_or_none()
+                meeting = local_db.execute(stmt).scalar_one_or_none()
                 if meeting and full_notes:
-                    existing = db.execute(select(AIHighlight).where(AIHighlight.meeting_id == meeting.id)).scalar_one_or_none()
-                    if not existing:
-                        db.add(AIHighlight(meeting_id=meeting.id, content=full_notes))
-                        db.commit()
+                    existing = local_db.execute(select(AIHighlight).where(AIHighlight.meeting_id == meeting.id)).scalar_one_or_none()
+                    if existing:
+                        existing.content = full_notes
+                    else:
+                        local_db.add(AIHighlight(meeting_id=meeting.id, content=full_notes))
+                    local_db.commit()
             except Exception as db_err:
                 print(f"[DB Error] Failed to write highlight metrics: {db_err}")
+                local_db.rollback()
+            finally:
+                local_db.close()
 
         return StreamingResponse(stream_generator(), media_type="text/plain")
     except Exception:
@@ -117,16 +124,21 @@ async def chat_ws(websocket: WebSocket, meeting_id: str):
         await websocket.close(code=1008, reason="Invalid authentication token")
         return
 
-    # Now handle messages
-    db = next(get_db())
+    # Now handle messages verified with short-lived database checks
+    try:
+        with SessionLocal() as db:
+            if not meeting_belongs_to_user(db, meeting_id, user_id):
+                print(f"[WS Chat] Ownership check failed for user {user_id} and meeting {meeting_id}")
+                await websocket.close(code=1008, reason="Meeting not found or access denied")
+                return
+    except Exception as db_err:
+        print(f"[WS Chat] Initial ownership check database error: {db_err}")
+        await websocket.close(code=1011, reason="Database connection error")
+        return
+            
+    print(f"[WS Chat] Connection fully established for meeting {meeting_id}")
     is_generating = False
     try:
-        if not meeting_belongs_to_user(db, meeting_id, user_id):
-            print(f"[WS Chat] Ownership check failed for user {user_id} and meeting {meeting_id}")
-            await websocket.close(code=1008, reason="Meeting not found or access denied")
-            return
-            
-        print(f"[WS Chat] Connection fully established for meeting {meeting_id}")
         while True:
             data = await websocket.receive_text()
             print(f"[WS Chat] Received raw message: {data}")
@@ -151,11 +163,14 @@ async def chat_ws(websocket: WebSocket, meeting_id: str):
             is_generating = True
             
             try:
-                # Save user question to DB
-                meeting = db.execute(select(Meeting).where(Meeting.meeting_id == meeting_id)).scalar_one_or_none()
-                if meeting:
-                    db.add(ChatMessage(meeting_id=meeting.id, role='user', content=question))
-                    db.commit()
+                # Save user question to DB in short-lived transaction
+                db_meeting_id = None
+                with SessionLocal() as db:
+                    meeting = db.execute(select(Meeting).where(Meeting.meeting_id == meeting_id)).scalar_one_or_none()
+                    if meeting:
+                        db_meeting_id = meeting.id
+                        db.add(ChatMessage(meeting_id=meeting.id, role='user', content=question))
+                        db.commit()
 
                 # Stream the answer
                 full_answer = ""
@@ -168,10 +183,11 @@ async def chat_ws(websocket: WebSocket, meeting_id: str):
                 # Indicate end of stream
                 await websocket.send_text("[DONE]")
 
-                # Save AI answer to DB
-                if meeting and full_answer:
-                    db.add(ChatMessage(meeting_id=meeting.id, role='ai', content=full_answer))
-                    db.commit()
+                # Save AI answer to DB in short-lived transaction
+                if db_meeting_id and full_answer:
+                    with SessionLocal() as db:
+                        db.add(ChatMessage(meeting_id=db_meeting_id, role='ai', content=full_answer))
+                        db.commit()
             except Exception as stream_err:
                 print(f"[WS Chat] Streaming error: {stream_err}")
                 traceback.print_exc()
@@ -189,8 +205,6 @@ async def chat_ws(websocket: WebSocket, meeting_id: str):
             await websocket.close(code=1011)
         except:
             pass
-    finally:
-        db.close()
 
 
 @router.post("/set-meeting-name")

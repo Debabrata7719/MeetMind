@@ -16,15 +16,15 @@ from src.application.auth_service import save_meeting
 
 router = APIRouter()
 
-# Module-level stream state
-stream = None
+# Scoped in-memory stream state per user
+active_recordings = {}
 
 
 @router.post("/start-recording")
 async def start_rec(user: dict = Depends(get_current_user)):
-    global stream
     try:
         stream = start_recording()
+        active_recordings[user["user_id"]] = stream
         return {"message": "Recording started"}
     except Exception:
         traceback.print_exc()
@@ -33,19 +33,23 @@ async def start_rec(user: dict = Depends(get_current_user)):
 
 @router.post("/stop-recording")
 async def stop_rec(user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
-    global stream
+    stream = active_recordings.pop(user["user_id"], None)
 
     if stream is None:
         raise HTTPException(400, "Recording not started")
 
     try:
         meeting_id = uuid4().hex
-        audio_path = stop_recording(stream, "uploads/meeting.wav")
-        await run_in_threadpool(process_meeting, str(audio_path), meeting_id)
-        stream = None
+        audio_path = f"uploads/{meeting_id}.wav"
+        
+        # Stop recording and write to the unique path
+        await run_in_threadpool(stop_recording, stream, audio_path)
 
-        # Save meeting to MySQL under this user
+        # Save meeting to database first under this user
         save_meeting(db, meeting_id, user["user_id"], "Live Recording")
+
+        # Process the saved meeting second
+        await run_in_threadpool(process_meeting, str(audio_path), meeting_id)
 
         return {
             "message": "Recording stopped & processed",

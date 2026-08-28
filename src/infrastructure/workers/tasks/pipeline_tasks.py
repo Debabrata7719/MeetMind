@@ -61,10 +61,10 @@ from src.infrastructure.cache.redis_client import redis_client
 from src.infrastructure.cache.job_progress import set_job_done
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
-def transcribe_live_chunk_task(self, file_path: str, meeting_id: str):
+def transcribe_live_chunk_task(self, file_path: str, meeting_id: str, index: int):
     """
-    Asynchronously transcribes a single audio chunk and appends the text
-    to the Redis list buffer for the meeting.
+    Asynchronously transcribes a single audio chunk and stores the text
+    in a Redis Hash by index.
     """
     try:
         api_key = os.getenv("ASSEMBLYAI_API_KEY")
@@ -81,59 +81,75 @@ def transcribe_live_chunk_task(self, file_path: str, meeting_id: str):
             err_msg = str(transcript.error)
             if "no spoken audio" in err_msg.lower() or "language_detection" in err_msg.lower():
                 print(f"[Live Celery] Skipping chunk {file_path} - No speech detected: {err_msg}")
+                if os.path.exists(file_path):
+                    os.remove(file_path)
                 return
             raise RuntimeError(f"AssemblyAI Error on chunk: {transcript.error}")
             
         text = transcript.text
         if text and text.strip():
             redis_key = f"live_transcript:{meeting_id}"
-            redis_client.rpush(redis_key, text.strip())
-            print(f"[Live Celery] Appended segment to {redis_key}: '{text.strip()[:30]}...'")
+            redis_client.hset(redis_key, str(index), text.strip())
+            print(f"[Live Celery] Saved segment to Hash {redis_key} at index {index}: '{text.strip()[:30]}...'")
         else:
             print(f"[Live Celery] Transcription empty for chunk: {file_path}")
 
+        # Clean up chunk file on success
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            print(f"[Live Celery] Cleaned up chunk file on success: {file_path}")
+
     except Exception as exc:
         print(f"[Live Celery] Error in chunk transcription: {exc}")
-        if os.path.exists(file_path):
-            raise self.retry(exc=exc)
+        attempt = self.request.retries + 1
+        max_retries = self.max_retries
+        
+        if attempt <= max_retries:
+            if os.path.exists(file_path):
+                raise self.retry(exc=exc)
+            else:
+                print(f"[Live Celery] Chunk file deleted, cannot retry. Skipping chunk.")
         else:
-            print(f"[Live Celery] Chunk file deleted, cannot retry. Skipping chunk.")
-    finally:
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-                print(f"[Live Celery] Cleaned up chunk file: {file_path}")
-            except Exception as e:
-                print(f"[Live Celery] Warning: failed to delete file {file_path}: {e}")
+            print(f"[Live Celery] Max retries exhausted for chunk {file_path}. Cleaning up.")
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception as e:
+                    print(f"[Live Celery] Warning: failed to delete file {file_path}: {e}")
+            raise
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
 def aggregate_live_meeting_task(self, meeting_id: str):
     """
-    Aggregates all transcript segments from Redis, chunks the text,
-    vectorizes and stores in Qdrant, generates highlights, and cleans up.
+    Aggregates all transcript segments from Redis Hash in chronological order,
+    chunks the text, vectorizes and stores in Qdrant, generates highlights, and cleans up.
     """
     from src.infrastructure.cache.job_progress import update_progress
     db = SessionLocal()
     try:
         update_progress(meeting_id, "transcribing", 20, "Compiling audio transcript segments...")
         redis_key = f"live_transcript:{meeting_id}"
-        segments = redis_client.lrange(redis_key, 0, -1)
+        segments_dict = redis_client.hgetall(redis_key)
         
-        if not segments:
+        if not segments_dict:
             print(f"[Live Celery] No transcript segments found in Redis for meeting {meeting_id}")
             meeting = db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first()
             if meeting:
                 existing = db.query(AIHighlight).filter(AIHighlight.meeting_id == meeting.id).first()
-                if not existing:
+                if existing:
+                    existing.content = "### No Speech Detected\n\nWe couldn't detect any spoken words or audio content in this live meeting. Please ensure your microphone is connected and you speak during the session."
+                else:
                     db.add(AIHighlight(
                         meeting_id=meeting.id, 
                         content="### No Speech Detected\n\nWe couldn't detect any spoken words or audio content in this live meeting. Please ensure your microphone is connected and you speak during the session."
                     ))
-                    db.commit()
+                db.commit()
             set_job_done(meeting_id)
             return
 
+        sorted_keys = sorted(segments_dict.keys(), key=int)
+        segments = [segments_dict[k] for k in sorted_keys]
         full_text = " ".join(segments)
         print(f"[Live Celery] Aggregated full transcript length: {len(full_text)}")
 
@@ -155,14 +171,17 @@ def aggregate_live_meeting_task(self, meeting_id: str):
             try:
                 result = extract_highlights(meeting_id)
                 existing = db.query(AIHighlight).filter(AIHighlight.meeting_id == meeting.id).first()
-                if not existing:
+                if existing:
+                    existing.content = result
+                else:
                     db.add(AIHighlight(meeting_id=meeting.id, content=result))
-                    db.commit()
+                db.commit()
             except Exception as e:
                 print(f"[Live Celery] Warning: failed to generate highlights: {e}")
 
         redis_client.delete(redis_key)
-        print(f"[Live Celery] Cleared Redis buffer {redis_key}")
+        redis_client.delete(f"live_transcript_seq:{meeting_id}")
+        print(f"[Live Celery] Cleared Redis buffer {redis_key} and sequence counter")
 
         set_job_done(meeting_id)
         print(f"[Live Celery] Live meeting aggregation complete for {meeting_id}")
@@ -170,6 +189,21 @@ def aggregate_live_meeting_task(self, meeting_id: str):
     except Exception as exc:
         print(f"[Live Celery] Error in live meeting aggregation: {exc}")
         db.rollback()
-        raise self.retry(exc=exc)
+        
+        attempt = self.request.retries + 1
+        max_retries = self.max_retries
+        
+        if attempt <= max_retries:
+            print(f"[Live Celery] Aggregation failed, retrying (Attempt {attempt}/{max_retries})")
+            set_job_retrying(meeting_id, attempt, max_retries)
+            raise self.retry(exc=exc)
+        else:
+            print(f"[Live Celery] Max retries exhausted for live meeting {meeting_id}. Failing permanently.")
+            set_job_failed(meeting_id, f"Live aggregation failed after {max_retries} retries: {str(exc)}")
+            
+            # Clean up Redis buffer
+            redis_key = f"live_transcript:{meeting_id}"
+            redis_client.delete(redis_key)
+            raise
     finally:
         db.close()

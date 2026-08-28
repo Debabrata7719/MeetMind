@@ -4,6 +4,7 @@ from qdrant_client.http import models as rest_models
 from langchain_core.prompts import ChatPromptTemplate
 import os
 import redis
+import asyncio
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -73,13 +74,10 @@ def extract_highlights(meeting_id: str):
         }
     )
 
-    # ========= Queries (Improved) =========
+    # ========= Queries (Combined to respect Voyage 3 RPM limit) =========
     queries = [
-        "important topics discussed",
-        "key decisions made",
-        "src.infrastructure.workers.tasks assigned or action items",
-        "deadlines or commitments",
-        "critical points or conclusions"
+        "important topics, key decisions, and critical conclusions",
+        "tasks assigned, action items, deadlines, and commitments"
     ]
 
     chunks = []
@@ -95,14 +93,10 @@ def extract_highlights(meeting_id: str):
     context = "\n\n".join(unique_chunks[:12])
 
     # ========= LLM =========
-    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        api_key = "placeholder_key"
-
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    llm = ChatGoogleGenerativeAI(
-        model=os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash"),
-        google_api_key=api_key,
+    from langchain_groq import ChatGroq
+    llm = ChatGroq(
+        model=os.getenv("GROQ_MODEL_NAME", "openai/gpt-oss-120b"),
+        groq_api_key=os.getenv("GROQ_API_KEY"),
         temperature=0
     )
 
@@ -150,7 +144,7 @@ Meeting Text:
 
 async def extract_highlights_stream(meeting_id: str):
     cache_key = f"highlights:{meeting_id}"
-    cached = redis_client.get(cache_key)
+    cached = await asyncio.to_thread(redis_client.get, cache_key)
     if cached:
         print(f"[INFO] Returning cached highlights for {meeting_id} from Redis")
         yield cached
@@ -211,30 +205,25 @@ async def extract_highlights_stream(meeting_id: str):
         }
     )
 
+    # ========= Queries (Combined to respect Voyage 3 RPM limit) =========
     queries = [
-        "important topics discussed",
-        "key decisions made",
-        "tasks assigned or action items",
-        "deadlines or commitments",
-        "critical points or conclusions"
+        "important topics, key decisions, and critical conclusions",
+        "tasks assigned, action items, deadlines, and commitments"
     ]
 
     chunks = []
     for q in queries:
-        docs = retriever.invoke(q)
+        docs = await retriever.ainvoke(q)
         chunks.extend([d.page_content.strip() for d in docs])
 
     unique_chunks = list(dict.fromkeys(chunks))
     context = "\n\n".join(unique_chunks[:12])
 
-    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        api_key = "placeholder_key"
-
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    llm = ChatGoogleGenerativeAI(
-        model=os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash"),
-        google_api_key=api_key,
+    # ========= LLM =========
+    from langchain_groq import ChatGroq
+    llm = ChatGroq(
+        model=os.getenv("GROQ_MODEL_NAME", "openai/gpt-oss-120b"),
+        groq_api_key=os.getenv("GROQ_API_KEY"),
         temperature=0,
         streaming=True
     )
@@ -279,6 +268,6 @@ Meeting Text:
             yield token
 
     if full_answer:
-        redis_client.set(cache_key, full_answer.strip(), ex=86400)
+        await asyncio.to_thread(redis_client.set, cache_key, full_answer.strip(), ex=86400)
         print("[OK] Highlights generated and cached in Redis")
 

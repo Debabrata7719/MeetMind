@@ -49,7 +49,8 @@ def process_meeting(file_path: str, meeting_id: str):
         try:
             meeting = db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first()
             if meeting:
-                duration = int(transcript.audio_duration)
+                duration_val = getattr(transcript, "audio_duration", 0)
+                duration = int(duration_val) if duration_val is not None else 0
                 meeting.duration = duration
                 user_id = meeting.user_id
                 db.commit()
@@ -67,9 +68,11 @@ def process_meeting(file_path: str, meeting_id: str):
                     from src.domain.models import AIHighlight
                     result = extract_highlights(meeting_id)
                     existing = db.query(AIHighlight).filter(AIHighlight.meeting_id == meeting.id).first()
-                    if not existing:
+                    if existing:
+                        existing.content = result
+                    else:
                         db.add(AIHighlight(meeting_id=meeting.id, content=result))
-                        db.commit()
+                    db.commit()
                 except Exception as e:
                     print(f"[Warning] Failed to generate highlights: {e}")
 
@@ -150,8 +153,18 @@ def delete_meeting_data(meeting_id: str, user_id: int):
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
     try:
         redis_client = redis.from_url(redis_url)
+        
+        # Scan and delete all matching semantic cache keys for this meeting
+        cache_pattern = f"semantic_cache:{user_id}:{meeting_id}:*"
+        cursor = 0
+        while True:
+            cursor, keys = redis_client.scan(cursor=cursor, match=cache_pattern, count=100)
+            if keys:
+                redis_client.delete(*keys)
+            if cursor == 0:
+                break
+                
         redis_client.delete(f"highlights:{meeting_id}")
-        redis_client.delete(f"semantic_cache:{user_id}:{meeting_id}")
         redis_client.delete(f"message_store:chat:{user_id}:{meeting_id}")
         redis_client.delete(f"chat:{user_id}:{meeting_id}")
     except Exception as e:

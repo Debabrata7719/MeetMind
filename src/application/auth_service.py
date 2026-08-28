@@ -30,8 +30,7 @@ def save_meeting(db: Session, meeting_id: str, user_id: int, name: str = "Untitl
 
     if meeting:
         if meeting.user_id != user_id:
-            # Overwriting someone else's meeting isn't allowed, but practically meeting_ids are UUIDs
-            pass
+            raise PermissionError("Access denied: meeting belongs to another user")
         meeting.name = name
         meeting.duration = duration
     else:

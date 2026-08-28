@@ -23,14 +23,17 @@ async def start_live_session(
         # Create meeting entry in Postgres
         save_meeting(db, meeting_id, user["user_id"], name)
         
-        # Reset the Redis live transcript buffer
+        # Reset the Redis live transcript buffer and sequence
         redis_key = f"live_transcript:{meeting_id}"
         redis_client.delete(redis_key)
+        redis_client.delete(f"live_transcript_seq:{meeting_id}")
         
         # Initialize job status to processing
         set_job_queued(meeting_id)
         
         return {"status": "started", "meeting_id": meeting_id}
+    except PermissionError as pe:
+        raise HTTPException(403, str(pe))
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(500, f"Failed to start live session: {e}")
@@ -47,20 +50,40 @@ async def upload_live_chunk(
         raise HTTPException(403, "Access denied")
         
     try:
+        # Enforce maximum chunk size of 15MB
+        MAX_CHUNK_SIZE = 15 * 1024 * 1024
+        
+        # Enforce valid audio content type or extension
+        content_type = file.content_type or ""
+        allowed_extensions = {".webm", ".wav", ".mp3", ".m4a", ".ogg", ".aac", ".flac"}
+        ext = os.path.splitext(file.filename)[1].lower() if file.filename else ".webm"
+        if ext not in allowed_extensions and not content_type.startswith("audio/"):
+            raise HTTPException(400, "Invalid file format. Only audio files are allowed.")
+            
         # Save uploaded chunk to temp path
         os.makedirs(os.path.join("data", "intermediate"), exist_ok=True)
-        ext = os.path.splitext(file.filename)[1] if file.filename else ".webm"
-        if not ext:
-            ext = ".webm"
         chunk_filename = f"{meeting_id}_{uuid.uuid4().hex}{ext}"
         temp_path = os.path.join("data", "intermediate", chunk_filename)
         
+        total_bytes = 0
         with open(temp_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
+            while True:
+                chunk = await file.read(1024 * 1024) # 1MB chunks
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > MAX_CHUNK_SIZE:
+                    buffer.close()
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                    raise HTTPException(413, "Chunk payload too large (max 15MB)")
+                buffer.write(chunk)
             
+        # Increment sequence counter in Redis
+        index = redis_client.incr(f"live_transcript_seq:{meeting_id}")
+        
         # Trigger Celery chunk transcription task
-        transcribe_live_chunk_task.delay(temp_path, meeting_id)
+        transcribe_live_chunk_task.delay(temp_path, meeting_id, index)
         
         return {"status": "chunk_uploaded", "filename": chunk_filename}
     except Exception as e:
@@ -78,8 +101,9 @@ async def get_live_transcript(
         
     try:
         redis_key = f"live_transcript:{meeting_id}"
-        segments = redis_client.lrange(redis_key, 0, -1)
-        decoded_segments = [seg.decode('utf-8') for seg in segments]
+        segments_dict = redis_client.hgetall(redis_key)
+        sorted_keys = sorted(segments_dict.keys(), key=int)
+        decoded_segments = [segments_dict[k] for k in sorted_keys]
         return {"meeting_id": meeting_id, "transcript_segments": decoded_segments, "full_transcript": " ".join(decoded_segments)}
     except Exception as e:
         traceback.print_exc()

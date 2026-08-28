@@ -26,7 +26,7 @@ def trigger_single_webhook(self, url: str, secret: str, event_name: str, payload
     }
     
     try:
-        res = requests.post(url, data=body, headers=headers, timeout=10)
+        res = requests.post(url, data=body, headers=headers, timeout=10, allow_redirects=False)
         res.raise_for_status()
         print(f"[OK] Triggered webhook: {url}")
     except Exception as exc:

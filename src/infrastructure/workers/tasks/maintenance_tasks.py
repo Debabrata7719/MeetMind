@@ -35,43 +35,10 @@ def cleanup_stale_uploads():
 def midnight_cleanup_task():
     """
     Runs every midnight.
-    - Flushes ALL data from Redis.
-    - Deletes all video resources from Cloudinary.
+    - Safe execution: Redis flush and global Cloudinary wipes are disabled to prevent data loss.
     """
     print(f"[{datetime.utcnow().isoformat()}] Starting Midnight Cleanup...")
-    
-    # 1. Flush Redis
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-    try:
-        r = redis.from_url(redis_url)
-        r.flushdb()
-        print("[OK] Flushed Redis DB completely.")
-    except Exception as e:
-        print(f"[Error] Failed to flush Redis: {e}")
-        
-    # 2. Flush Cloudinary
-    import cloudinary
-    import cloudinary.api
-    
-    cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
-    api_key = os.getenv("CLOUDINARY_API_KEY")
-    api_secret = os.getenv("CLOUDINARY_API_SECRET")
-    
-    if cloud_name and api_key and api_secret:
-        cloudinary.config(
-            cloud_name=cloud_name,
-            api_key=api_key,
-            api_secret=api_secret
-        )
-        try:
-            # Delete all resources of type 'video'
-            res = cloudinary.api.delete_all_resources(resource_type="video")
-            print(f"[OK] Flushed Cloudinary videos. Result: {res}")
-        except Exception as e:
-            print(f"[Error] Failed to flush Cloudinary: {e}")
-    else:
-        print("[Warning] Cloudinary credentials not found. Skipping Cloudinary flush.")
-        
+    print("[Info] Redis flushdb and global Cloudinary video wipes are disabled to prevent data loss. Ephemeral keys rely on TTLs.")
     print(f"[{datetime.utcnow().isoformat()}] Finished Midnight Cleanup.")                
     return "Midnight cleanup completed."
 

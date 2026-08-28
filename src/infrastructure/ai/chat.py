@@ -40,14 +40,10 @@ from src.infrastructure.ai.embeddings import shared_embedding_model as embedding
 # ===============================
 # LLM (load once)
 # ===============================
-api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-if not api_key:
-    api_key = "placeholder_key"
-
-from langchain_google_genai import ChatGoogleGenerativeAI
-llm = ChatGoogleGenerativeAI(
-    model=os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash"),
-    google_api_key=api_key,
+from langchain_groq import ChatGroq
+llm = ChatGroq(
+    model=os.getenv("GROQ_MODEL_NAME", "openai/gpt-oss-120b"),
+    groq_api_key=os.getenv("GROQ_API_KEY"),
     temperature=0.3
 )
 
@@ -180,21 +176,11 @@ redis_client = redis.from_url(REDIS_URL)
 
 def ask_question(query: str, meeting_id: str, user_id: int):
     import hashlib
-    # ===============================
-    # Semantic Cache Check
-    # ===============================
-    cache_key = f"semantic_cache:{user_id}:{meeting_id}:{hashlib.sha256(query.encode()).hexdigest()}"
-    cached_answer = redis_client.get(cache_key)
-    if cached_answer:
-        return {"answer": cached_answer.decode('utf-8'), "cached": True}
 
     if not query.strip():
         return "Please ask a valid question."
 
     query_clean = query.strip()
-
-    # 4. Cache Miss - run the chain
-    retriever = _get_retriever(meeting_id)
 
     # Redis-backed chat history — scoped per user + meeting
     session_id = f"chat:{user_id}:{meeting_id}"
@@ -202,6 +188,22 @@ def ask_question(query: str, meeting_id: str, user_id: int):
         session_id=session_id,
         url=REDIS_URL,
     )
+
+    # ===============================
+    # Semantic Cache Check
+    # ===============================
+    # Include history context in the cache key to prevent follow-up key collisions
+    recent_msgs = chat_history.messages[-5:]
+    history_str = "".join([f"{msg.type}:{msg.content}" for msg in recent_msgs])
+    cache_key_raw = f"{query_clean}_{history_str}"
+    cache_key = f"semantic_cache:{user_id}:{meeting_id}:{hashlib.sha256(cache_key_raw.encode()).hexdigest()}"
+    
+    cached_answer = redis_client.get(cache_key)
+    if cached_answer:
+        return cached_answer.decode('utf-8')
+
+    # 4. Cache Miss - run the chain
+    retriever = _get_retriever(meeting_id)
 
     memory = ConversationBufferWindowMemory(
         k=5,
@@ -259,28 +261,35 @@ class AsyncIteratorCallbackHandler(AsyncCallbackHandler):
 
 async def ask_question_stream(query: str, meeting_id: str, user_id: int):
     import hashlib
-    # ===============================
-    # Semantic Cache Check
-    # ===============================
-    cache_key = f"semantic_cache:{user_id}:{meeting_id}:{hashlib.sha256(query.encode()).hexdigest()}"
-    cached_answer = redis_client.get(cache_key)
-    if cached_answer:
-        yield cached_answer.decode('utf-8')
-        return
-
+    
     if not query.strip():
         yield "Please ask a valid question."
         return
 
     query_clean = query.strip()
-    retriever = _get_retriever(meeting_id)
 
     session_id = f"chat:{user_id}:{meeting_id}"
     chat_history = RedisChatMessageHistory(session_id=session_id, url=REDIS_URL)
 
-    # Retrieve relevant documents
+    # ===============================
+    # Semantic Cache Check
+    # ===============================
+    # Include history context in the cache key to prevent follow-up key collisions
+    recent_msgs = chat_history.messages[-5:]
+    history_str = "".join([f"{msg.type}:{msg.content}" for msg in recent_msgs])
+    cache_key_raw = f"{query_clean}_{history_str}"
+    cache_key = f"semantic_cache:{user_id}:{meeting_id}:{hashlib.sha256(cache_key_raw.encode()).hexdigest()}"
+    
+    cached_answer = await asyncio.to_thread(redis_client.get, cache_key)
+    if cached_answer:
+        yield cached_answer.decode('utf-8')
+        return
+
+    retriever = _get_retriever(meeting_id)
+
+    # Retrieve relevant documents via non-blocking async I/O
     try:
-        docs = retriever.invoke(query_clean)
+        docs = await retriever.ainvoke(query_clean)
         context_text = "\n\n".join([d.page_content for d in docs])
     except Exception as e:
         print(f"[Retrieval Error] {e}")
@@ -299,9 +308,9 @@ async def ask_question_stream(query: str, meeting_id: str, user_id: int):
         chat_history=chat_history_str
     )
 
-    streaming_llm = ChatGoogleGenerativeAI(
-        model=os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash"),
-        google_api_key=api_key,
+    streaming_llm = ChatGroq(
+        model=os.getenv("GROQ_MODEL_NAME", "openai/gpt-oss-120b"),
+        groq_api_key=os.getenv("GROQ_API_KEY"),
         temperature=0.3,
         streaming=True
     )
@@ -333,4 +342,4 @@ async def ask_question_stream(query: str, meeting_id: str, user_id: int):
     if "don't know" in full_answer.lower() or "don't have enough" in full_answer.lower() or "do not have enough" in full_answer.lower() or not full_answer:
         full_answer = "Not found in the meeting transcript"
 
-    redis_client.set(cache_key, full_answer.strip(), ex=3600)
+    await asyncio.to_thread(redis_client.set, cache_key, full_answer.strip(), ex=3600)

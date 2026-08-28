@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from src.infrastructure.database import get_db
 from src.application.auth_service import create_user, get_user_by_email, update_password, update_user_name
 from src.application.email_service import send_otp_email
+from src.presentation.dependencies import get_current_user
 from src.application.security import (
     validate_password,
     verify_password,
@@ -102,8 +103,12 @@ def login(request: Request, payload: LoginRequest, response: Response, db: Sessi
 # ─── Logout ────────────────────────────────────────────────────────────────────
 
 @router.post("/logout")
-def logout(response: Response):
+def logout(response: Response, user: dict = Depends(get_current_user)):
     is_prod = os.getenv("ENV") == "production"
+
+    # Revoke tokens server-side in Redis
+    from src.application.security import revoke_user_tokens
+    revoke_user_tokens(user["user_id"])
 
     response.delete_cookie(
         key=COOKIE_NAME, 
@@ -181,12 +186,17 @@ def change_password(request: Request, payload: UpdatePasswordRequest, db: Sessio
         raise HTTPException(400, "Weak password: " + ", ".join(errors))
 
     update_password(db, user.email, payload.new_password)
+    
+    # Revoke tokens server-side in Redis on password change
+    from src.application.security import revoke_user_tokens
+    revoke_user_tokens(user.id)
+
     return {"message": "Password updated successfully"}
 
 
 # ─── Forgot Password ───────────────────────────────────────────────────────────
 
-import random
+import secrets
 import redis as redis_lib
 
 OTP_TTL = 5 * 60  # 5 minutes in seconds
@@ -208,9 +218,12 @@ def forgot_password(request: Request, payload: dict, db: Session = Depends(get_d
     if not user:
         raise HTTPException(404, "No account found with this email. Please create a new account.")
 
-    otp = str(random.randint(1000, 9999))
+    # 6-digit cryptographically secure OTP
+    otp = f"{secrets.randbelow(900000) + 100000}"
     r = _get_redis()
     r.setex(f"otp:{email}", OTP_TTL, otp)
+    r.delete(f"otp_attempts:{email}")
+    r.delete(f"otp_verified:{email}")
 
     try:
         send_otp_email(email, otp)
@@ -222,7 +235,8 @@ def forgot_password(request: Request, payload: dict, db: Session = Depends(get_d
 
 
 @router.post("/verify-otp")
-def verify_otp(payload: dict, db: Session = Depends(get_db)):
+@limiter.limit("3/minute")
+def verify_otp(request: Request, payload: dict, db: Session = Depends(get_db)):
     """Validate the OTP from Redis. Returns success if it matches."""
     email = payload.get("email", "").strip().lower()
     otp = str(payload.get("otp", "")).strip()
@@ -231,22 +245,44 @@ def verify_otp(payload: dict, db: Session = Depends(get_db)):
         raise HTTPException(400, "Email and OTP are required")
 
     r = _get_redis()
-    stored_otp = r.get(f"otp:{email}")
+    
+    # 1. Check attempt lockout
+    attempts_key = f"otp_attempts:{email}"
+    attempts = r.get(attempts_key)
+    if attempts and int(attempts) >= 3:
+        raise HTTPException(400, "Too many wrong attempts. This OTP has been invalidated. Please generate a new one.")
 
+    # 2. Check if OTP exists
+    stored_otp = r.get(f"otp:{email}")
     if not stored_otp:
         raise HTTPException(400, "Invalid or expired OTP. Please generate a new one.")
-    if stored_otp != otp:
-        raise HTTPException(400, "Invalid OTP. Please check and try again.")
 
-    # OTP is correct — mark it as verified (replace with a verified flag, keep TTL)
+    # 3. Check if OTP matches
+    if stored_otp != otp:
+        attempts = r.incr(attempts_key)
+        if attempts == 1:
+            r.expire(attempts_key, OTP_TTL)
+            
+        if attempts >= 3:
+            r.delete(f"otp:{email}")
+            raise HTTPException(400, "Too many wrong attempts. This OTP has been locked and invalidated. Please generate a new one.")
+            
+        raise HTTPException(400, f"Invalid OTP. Please check and try again. You have {3 - attempts} attempts remaining.")
+
+    # 4. Success — consume OTP, clear attempts counter, set verified flag
     ttl = r.ttl(f"otp:{email}")
+    if ttl <= 0:
+        ttl = OTP_TTL
     r.setex(f"otp_verified:{email}", ttl, "1")
+    r.delete(f"otp:{email}")
+    r.delete(attempts_key)
 
     return {"message": "OTP verified successfully."}
 
 
 @router.post("/reset-password")
-def reset_password(payload: dict, db: Session = Depends(get_db)):
+@limiter.limit("3/minute")
+def reset_password(request: Request, payload: dict, db: Session = Depends(get_db)):
     """Reset the user's password. Requires a prior successful /verify-otp call."""
     email = payload.get("email", "").strip().lower()
     new_password = payload.get("new_password", "")
@@ -266,6 +302,12 @@ def reset_password(payload: dict, db: Session = Depends(get_db)):
     success = update_password(db, email, new_password)
     if not success:
         raise HTTPException(404, "User not found.")
+
+    # Revoke tokens server-side in Redis on password reset
+    user = get_user_by_email(db, email)
+    if user:
+        from src.application.security import revoke_user_tokens
+        revoke_user_tokens(user.id)
 
     # Clean up Redis keys
     r.delete(f"otp:{email}")
@@ -287,12 +329,32 @@ def google_login(request: Request):
     if request.method == "HEAD":
         return Response(status_code=200)
         
-    return RedirectResponse(
-        url=f"https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id={GOOGLE_CLIENT_ID}&redirect_uri={redirect_uri}&scope=openid%20profile%20email&access_type=offline"
+    state = secrets.token_urlsafe(32)
+    response = RedirectResponse(
+        url=f"https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id={GOOGLE_CLIENT_ID}&redirect_uri={redirect_uri}&scope=openid%20profile%20email&access_type=offline&state={state}"
     )
+    
+    is_https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    is_prod = os.getenv("ENV") == "production" or is_https
+
+    response.set_cookie(
+        key="oauth_state",
+        value=state,
+        httponly=True,
+        secure=is_prod,
+        samesite="lax",
+        max_age=300, # 5 minutes TTL
+        path="/"
+    )
+    return response
 
 @router.get("/google/callback")
-async def google_callback(request: Request, code: str, db: Session = Depends(get_db)):
+async def google_callback(request: Request, code: str, state: str = None, db: Session = Depends(get_db)):
+    # 1. State Validation against CSRF
+    cookie_state = request.cookies.get("oauth_state")
+    if not cookie_state or not state or cookie_state != state:
+        raise HTTPException(400, "OAuth state verification failed. Possible CSRF attack detected.")
+
     backend_url = os.getenv("BACKEND_URL", str(request.base_url).rstrip("/"))
     redirect_uri = f"{backend_url}/auth/google/callback"
     
@@ -359,4 +421,8 @@ async def google_callback(request: Request, code: str, db: Session = Depends(get
         max_age=EXPIRE_HOURS * 3600,
         path="/"
     )
+    
+    # Delete the OAuth state cookie
+    response.delete_cookie("oauth_state", path="/")
+    
     return response

@@ -63,7 +63,7 @@ class AIHighlight(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     meeting_id: Mapped[int] = mapped_column(
-        ForeignKey("meetings.id", ondelete="CASCADE"), index=True, nullable=False
+        ForeignKey("meetings.id", ondelete="CASCADE"), unique=True, index=True, nullable=False
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

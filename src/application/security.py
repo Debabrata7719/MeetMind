@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "changeme")
+SECRET_KEY: str = os.getenv("JWT_SECRET_KEY")
 ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
 EXPIRE_HOURS: int = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
 
@@ -56,12 +56,20 @@ def verify_password(plain: str, hashed: str) -> bool:
 # ─── JWT ───────────────────────────────────────────────────────────────────────
 
 def create_access_token(user_id: int, email: str) -> str:
-    """Create a signed JWT containing user_id and email."""
+    """Create a signed JWT containing user_id and email with a token version."""
+    from src.infrastructure.cache.redis_client import redis_client
+    version_key = f"user_token_version:{user_id}"
+    version = redis_client.get(version_key)
+    if not version:
+        version = "1"
+        redis_client.set(version_key, "1")
+
     expire = datetime.now(timezone.utc) + timedelta(hours=EXPIRE_HOURS)
     payload = {
         "sub": str(user_id),
         "email": email,
         "exp": expire,
+        "version": int(version)
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -73,3 +81,10 @@ def decode_access_token(token: str) -> dict:
     Returns the payload dict on success.
     """
     return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+
+def revoke_user_tokens(user_id: int) -> None:
+    """Increment the user's token version in Redis to invalidate all existing tokens."""
+    from src.infrastructure.cache.redis_client import redis_client
+    version_key = f"user_token_version:{user_id}"
+    redis_client.incr(version_key)
