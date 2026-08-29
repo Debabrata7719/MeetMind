@@ -47,7 +47,8 @@ def get_s3_presigned_url(request: Request, filename: str, filetype: str, user: d
             aws_access_key_id=aws_key,
             aws_secret_access_key=aws_secret,
             config=Config(signature_version="s3v4"),
-            region_name="ap-south-1"  # Mumbai region
+            region_name="ap-south-1",  # Mumbai region
+            endpoint_url="https://s3.ap-south-1.amazonaws.com"
         )
         
         presigned_post = s3_client.generate_presigned_post(
