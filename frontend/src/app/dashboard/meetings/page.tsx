@@ -23,32 +23,32 @@ export default function MeetingsPage() {
     setIsUploading(true);
 
     try {
-      // 1. Get Cloudinary signature from our backend
-      const sigRes = await fetch(`${API_BASE}/upload/signature`, {
-        credentials: "include",
-      });
+      // 1. Get S3 presigned post URL from our backend
+      const sigRes = await fetch(
+        `${API_BASE}/upload/s3-presigned?filename=${encodeURIComponent(selectedFile.name)}&filetype=${encodeURIComponent(selectedFile.type)}`,
+        {
+          credentials: "include",
+        }
+      );
       if (!sigRes.ok) throw new Error("Failed to get upload signature");
       const sigData = await sigRes.json();
 
-      // 2. Upload directly to Cloudinary
-      const cloudinaryFormData = new FormData();
-      cloudinaryFormData.append("file", selectedFile);
-      cloudinaryFormData.append("api_key", sigData.api_key);
-      cloudinaryFormData.append("timestamp", sigData.timestamp);
-      cloudinaryFormData.append("signature", sigData.signature);
+      // 2. Upload directly to S3
+      const s3FormData = new FormData();
+      Object.entries(sigData.fields).forEach(([key, value]) => {
+        s3FormData.append(key, value as string);
+      });
+      // S3 requires the file parameter to be appended LAST
+      s3FormData.append("file", selectedFile);
 
-      const cloudRes = await fetch(
-        `https://api.cloudinary.com/v1_1/${sigData.cloud_name}/auto/upload`,
-        {
-          method: "POST",
-          body: cloudinaryFormData,
-        }
-      );
+      const s3Res = await fetch(sigData.url, {
+        method: "POST",
+        body: s3FormData,
+      });
       
-      if (!cloudRes.ok) throw new Error("Failed to upload to Cloudinary");
-      const cloudData = await cloudRes.json();
+      if (!s3Res.ok) throw new Error("Failed to upload to S3 storage bucket");
 
-      // 3. Send the Cloudinary URL to our backend
+      // 3. Send the S3 file key to our backend
       const res = await fetch(`${API_BASE}/upload`, {
         method: "POST",
         headers: {
@@ -56,7 +56,7 @@ export default function MeetingsPage() {
         },
         credentials: "include",
         body: JSON.stringify({
-          file_url: cloudData.secure_url,
+          file_key: sigData.file_key,
           original_name: selectedFile.name.split('.')[0]
         }),
       });

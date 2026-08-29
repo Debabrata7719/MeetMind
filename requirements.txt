@@ -27,6 +27,7 @@ voyageai
 qdrant-client
 cloudinary
 groq
+boto3
 
 # ─── LangChain Ecosystem ──────────────────────────────────────────────────
 langchain

@@ -82,21 +82,24 @@ def process_meeting(file_path: str, meeting_id: str):
         update_progress(meeting_id, "done", 100, "Processing complete")
         set_job_done(meeting_id)
 
-        # 5. Clean up from Cloudinary if it's a URL, or local disk if it's a file
-        if file_path.startswith("http"):
+        # 5. Clean up from S3 if it's a URL, or local disk if it's a file
+        if file_path.startswith("http") and ".amazonaws.com/" in file_path:
             try:
-                import cloudinary
-                import cloudinary.uploader
-                # Extract public_id from Cloudinary URL (e.g., https://res.cloudinary.com/.../upload/v1234/public_id.mp4)
-                # Split by /upload/, then get everything after the version folder, and strip the extension
-                parts = file_path.split("/upload/")
+                import boto3
+                parts = file_path.split(".amazonaws.com/")
                 if len(parts) == 2:
-                    after_upload = parts[1].split("/", 1)[-1] # Removes the v1234 folder if present
-                    public_id = after_upload.rsplit(".", 1)[0]
-                    cloudinary.uploader.destroy(public_id, resource_type="video")
-                    print(f"[OK] Deleted source file from Cloudinary: {public_id}")
+                    file_key = parts[1]
+                    s3_bucket = os.getenv("AWS_S3_BUCKET")
+                    s3_client = boto3.client(
+                        "s3",
+                        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+                        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+                        region_name="ap-south-1"
+                    )
+                    s3_client.delete_object(Bucket=s3_bucket, Key=file_key)
+                    print(f"[OK] Deleted source file from S3: {file_key}")
             except Exception as e:
-                print(f"[Warning] Failed to delete from Cloudinary: {e}")
+                print(f"[Warning] Failed to delete from S3: {e}")
         elif os.path.exists(file_path):
             os.remove(file_path)
             print(f"[OK] Deleted local source file: {file_path}")

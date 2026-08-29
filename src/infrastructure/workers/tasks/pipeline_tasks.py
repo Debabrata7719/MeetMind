@@ -28,18 +28,23 @@ def process_meeting_task(self, file_path: str, meeting_id: str):
             set_job_failed(meeting_id, f"Processing failed after {max_retries} retries: {str(exc)}")
             
             # Clean up the file to prevent storage leaks
-            if file_path.startswith("http"):
+            if file_path.startswith("http") and ".amazonaws.com/" in file_path:
                 try:
-                    import cloudinary
-                    import cloudinary.uploader
-                    parts = file_path.split("/upload/")
+                    import boto3
+                    parts = file_path.split(".amazonaws.com/")
                     if len(parts) == 2:
-                        after_upload = parts[1].split("/", 1)[-1]
-                        public_id = after_upload.rsplit(".", 1)[0]
-                        cloudinary.uploader.destroy(public_id, resource_type="video")
-                        print(f"[OK] Deleted orphaned Cloudinary file after failure: {public_id}")
+                        file_key = parts[1]
+                        s3_bucket = os.getenv("AWS_S3_BUCKET")
+                        s3_client = boto3.client(
+                            "s3",
+                            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+                            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+                            region_name="ap-south-1"
+                        )
+                        s3_client.delete_object(Bucket=s3_bucket, Key=file_key)
+                        print(f"[OK] Deleted orphaned S3 file after failure: {file_key}")
                 except Exception as cleanup_err:
-                    print(f"[Error] Failed to delete Cloudinary file {file_path}: {cleanup_err}")
+                    print(f"[Error] Failed to delete S3 file {file_path}: {cleanup_err}")
             elif os.path.exists(file_path):
                 try:
                     os.remove(file_path)
