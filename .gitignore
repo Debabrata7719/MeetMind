@@ -20,6 +20,7 @@ tests/
 # ─── Environment variables ────────────────────────────────
 .env
 .env.docker
+.env.production
 
 # ─── Testing ──────────────────────────────────────────────
 .pytest_cache/
